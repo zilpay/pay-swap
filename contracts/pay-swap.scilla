@@ -21,7 +21,7 @@ let zero = Uint128 0
 let one = Uint128 1
 let min_liquidity = Uint128 1000000000000000 (* 1000 ZIL *)
 let fee_denom = Uint256 10000 (* fee denominated in basis points (1 b.p. = 0.01%) *)
-let zil_address = 0x0000000000000000000000000000000000000000
+let zero_address = 0x0000000000000000000000000000000000000000
 let zil = Zil
 let true = True
 
@@ -192,7 +192,7 @@ field balances : Map ByStr20 (Map ByStr20 Uint128) = Emp ByStr20 (Map ByStr20 Ui
 field total_contributions : Map ByStr20 Uint128 = Emp ByStr20 Uint128
 field output_after_fee : Uint256 = builtin sub fee_denom initial_fee
 field owner : ByStr20 = initial_owner
-field pending_owner : ByStr20 = zil_address
+field pending_owner : ByStr20 = zero_address
 field initialized : Bool = False
 
 procedure ThrowIfExpired(deadline_block: BNum)
@@ -221,7 +221,7 @@ procedure ThrowIfNone(number: Uint128)
 end
 
 procedure ThrowIfZil(address : ByStr20)
-  is_zil = builtin eq address zil_address;
+  is_zil = builtin eq address zero_address;
   match is_zil with
   | False =>
   | True => e = { _exception : "InvalidParameter" }; throw e
@@ -258,6 +258,14 @@ procedure ThrowUnlessInitialized()
   match inited with
   | True =>
   | False => e = { _exception : "NotYetInitialized" }; throw e
+  end
+end
+
+procedure CheckMinLiquidity()
+  min_zil_contributed = uint128_ge _amount min_liquidity;
+  match min_zil_contributed with
+  | True =>
+  | False => e = { _exception : "InvalidParameter" }; throw e
   end
 end
 
@@ -601,7 +609,7 @@ transition AcceptPendingOwnership()
   | False => e = { _exception : "InvalidSender" }; throw e
   | True =>
     owner := new_owner;
-    pending_owner := zil_address;
+    pending_owner := zero_address;
     e = { _eventname: "OwnershipTransferred"; owner: new_owner };
     event e
   end
@@ -628,11 +636,7 @@ transition AddLiquidity(
   maybe_pool <- pools[token_address];
   match maybe_pool with
   | None =>
-    min_zil_contributed = uint128_ge _amount min_liquidity;
-    match min_zil_contributed with
-    | True =>
-    | False => e = { _exception : "InvalidParameter" }; throw e
-    end;
+    CheckMinLiquidity;
 
     tokens_in = Coins token max_token_amount;
     Receive tokens_in;
@@ -658,6 +662,7 @@ transition AddLiquidity(
       total_contribution = unwrapOrZero maybe_total_contribution;
       ThrowIfNone total_contribution;
 
+      (* (_amount *  total_contribution) / x *)
       new_contribution = frac _amount x total_contribution;
       within_limits =
         let token_lte_max = uint128_le delta_y max_token_amount in
