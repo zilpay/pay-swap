@@ -75,7 +75,7 @@ let outputFor : Uint128 -> Uint128 -> Uint128 -> Uint256 -> Uint128 =
     let numerator = builtin mul input_amount_after_fee output_reserve in
     let denominator =
       let d1 = builtin mul input_reserve fee_denom in
-      builtin add d1 input_amount_after_fee in
+        builtin add d1 input_amount_after_fee in
     let result = builtin div numerator denominator in
     let maybe = builtin to_uint128 result in
     match maybe with
@@ -310,13 +310,20 @@ procedure Send(coins : Coins, to_address : ByStr20)
   | Coins denom amount =>
     match denom with
     | Zil =>
-      msg = { _tag : "AddFunds"; _recipient: to_address; _amount: amount };
+      msg = {
+        _tag : "AddFunds";
+        _recipient: to_address;
+        _amount: amount
+      };
       msgs = oneMsg msg;
       send msgs
     | Token token =>
       msg_to_token =  {
-        _tag : "Transfer"; _recipient: token; _amount: zero;
-        to: to_address; amount: amount
+        _tag : "Transfer";
+        _recipient: token;
+        _amount: zero;
+        to: to_address;
+        amount: amount
       };
       msgs = oneMsg msg_to_token;
       send msgs
