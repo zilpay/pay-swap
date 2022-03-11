@@ -667,7 +667,6 @@ transition AddLiquidity(
       delta_y = builtin add result one;
       maybe_total_contribution <- total_contributions[token_address];
       total_contribution = unwrapOrZero maybe_total_contribution;
-      ThrowIfNone total_contribution;
 
       (* (_amount *  total_contribution) / x *)
       new_contribution = frac _amount x total_contribution;

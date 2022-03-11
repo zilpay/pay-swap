@@ -30,6 +30,9 @@ class Pool:
             "y": self.y
         }
 
+    def __repr__(self):
+        return "x: %i, y: %i" % (self.x, self.y)
+
 class SwapDirection(enum.Enum):
     ZilToToken = 0
     TokenToZil = 1
@@ -57,6 +60,12 @@ def unwrap_or_zero(wrapped: int = None) -> int:
     if (wrapped):
         return int(wrapped)
     return 0
+
+def unpack_dict(map: dict, key: str):
+    try:
+        return map[key]
+    except:
+        return None
 
 def frac(d: int, x: int, y: int) -> int:
     # TESTED
@@ -194,14 +203,58 @@ def addLiquidity(
             "pool": token_address
         })
         balances[token_address] = dict()
-        balances[token_address][_sender] = _amount;
-        total_contributions[token_address] = _amount;
+        balances[token_address][_sender] = _amount
+        total_contributions[token_address] = _amount
         print({
             "_eventname": "Mint",
             "pool": token_address,
             "address": _sender,
             "amount": _amount
         })
+        return
+    
+    pool = pools[token_address]
+    result = frac(_amount, pool.x, pool.y)
+    delta_y = result + ONE
+
+    mb_total_contribution = unpack_dict(total_contributions, token_address)
+    total_contribution = unwrap_or_zero(mb_total_contribution)
+    new_contribution = frac(_amount, pool.x, total_contribution)
+
+    token_lte_max = delta_y < max_token_amount
+    contribution_gte_max = new_contribution > min_contribution_amount
+    within_limits = token_lte_max and contribution_gte_max
+
+    print(delta_y, max_token_amount)
+
+    if within_limits == False:
+        raise "RequestedRatesCannotBeFulfilled delta_y: %i" % delta_y
+    
+    new_x = pool.x + _amount
+    new_y = pool.y + delta_y
+
+    new_pool = Pool(new_x, new_y)
+
+    pools[token_address] = new_pool
+
+    try:
+        existing_balance = balances[token_address][_sender]
+        new_balance = existing_balance + new_contribution
+        balances[token_address][_sender] = new_balance
+    except:
+        balances[token_address] = dict()
+        balances[token_address][_sender] = _amount
+
+    new_total_contribution = total_contribution + new_contribution
+    total_contributions[token_address] = new_total_contribution
+
+    print({
+        "_eventname": "Mint",
+        "pool": token_address,
+        "address": _sender,
+        "amount": new_contribution
+    })
+
 
 
 def removeLiquidity():
@@ -214,6 +267,23 @@ addLiquidity(
     4000
 )
 
+print("")
+print('###################################################################################################')
+print("")
+print(pools)
+print(balances)
+print(total_contributions)
+
+addLiquidity(
+    "0xee4caad51521da0f284b64c4d5e9d024bfa852e6",
+    2000,
+    20000,
+    4000
+)
+
+print("")
+print('###################################################################################################')
+print("")
 print(pools)
 print(balances)
 print(total_contributions)
