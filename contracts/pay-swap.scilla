@@ -675,7 +675,8 @@ transition AddLiquidity(
         let contribution_gte_max = uint128_ge new_contribution min_contribution_amount in
         andb token_lte_max contribution_gte_max;
       match within_limits with
-      | True => | False => e = { _exception : "RequestedRatesCannotBeFulfilled" ; delta_y: delta_y }; throw e
+      | True =>
+      | False => e = { _exception : "RequestedRatesCannotBeFulfilled" ; delta_y: delta_y }; throw e
       end;
 
       tokens_in = Coins token delta_y;

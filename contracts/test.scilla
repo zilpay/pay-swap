@@ -181,5 +181,94 @@ contract PaySwapContract
 ()
 
 field pools : Map ByStr20 Pool = Emp ByStr20 Pool
+field balances : Map ByStr20 (Map ByStr20 Uint128) = Emp ByStr20 (Map ByStr20 Uint128)
+field total_contributions : Map ByStr20 Uint128 = Emp ByStr20 Uint128
+
+procedure ThrowIfExpired(deadline_block: BNum)
+  current_block <- & BLOCKNUMBER;
+  is_not_expired = builtin blt current_block deadline_block;
+  match is_not_expired with
+  | True =>
+  | False => e = { _exception : "TransactionExpired" }; throw e
+  end
+end
+
+procedure ThrowIfZero(number: Uint128)
+  gt_zero = uint128_gt number zero;
+  match gt_zero with
+  | True =>
+  | False => e = { _exception : "InvalidParameter" }; throw e
+  end
+end
+
+transition AddLiquidity(
+  token_address : ByStr20,
+  min_contribution_amount : Uint128,
+  max_token_amount : Uint128,
+  amt : Uint128
+)
+  ThrowIfZero amt;
+  ThrowIfZero max_token_amount;
+
+  token = Token token_address;
+
+  maybe_pool <- pools[token_address];
+  match maybe_pool with
+  | None =>
+    new_pool = Pool amt max_token_amount;
+    pools[token_address] := new_pool;
+    e1 = { _eventname: "PoolCreated"; pool: token_address };
+    event e1;
+
+    balances[token_address][_sender] := amt;
+    total_contributions[token_address] := amt;
+    e2 = { _eventname: "Mint"; pool: token_address; address: _sender; amount: amt };
+    event e2
+  | Some pool =>
+    match pool with
+    | Pool x y => (* zil reserve, token reserve *)
+
+      (* dY = dX * Y / X + 1 *)
+      (* dX is always the QA transferred *)
+      result = frac amt x y;
+      delta_y = builtin add result one;
+      maybe_total_contribution <- total_contributions[token_address];
+      total_contribution = unwrapOrZero maybe_total_contribution;
+      ThrowIfZero total_contribution;
+
+      (* (amt *  total_contribution) / x *)
+      new_contribution = frac amt x total_contribution;
+      within_limits =
+        let token_lte_max = uint128_le delta_y max_token_amount in
+        let contribution_gte_max = uint128_ge new_contribution min_contribution_amount in
+        andb token_lte_max contribution_gte_max;
+      match within_limits with
+      | True =>
+      | False => e = { _exception : "RequestedRatesCannotBeFulfilled" ; delta_y: delta_y }; throw e
+      end;
+
+      new_pool =
+        let new_x = builtin add x amt in
+        let new_y = builtin add y delta_y in
+        Pool new_x new_y;
+      pools[token_address] := new_pool;
+
+      existing_balance <- balances[token_address][_sender];
+      match existing_balance with
+      | Some b =>
+        new_balance = builtin add b new_contribution;
+        balances[token_address][_sender] := new_balance
+      | None =>
+        balances[token_address][_sender] := new_contribution
+      end;
+
+      new_total_contribution = builtin add total_contribution new_contribution;
+      total_contributions[token_address] := new_total_contribution;
+
+      e = { _eventname: "Mint"; pool: token_address; address: _sender; amount: new_contribution };
+      event e
+    end
+  end
+end
 
 

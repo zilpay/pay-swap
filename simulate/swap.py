@@ -193,8 +193,9 @@ def addLiquidity(
     min_contribution_amount : int,
     max_token_amount : int,
     _amount: int,
-    _sender = "0xee4caad51521da0f284b64c4d5e9d024bfa852e6"
+    _sender = "0x8617B72E22090f0c13167865147eC48a6dB788ff"
 ):
+    # TESTED
     if (token_address not in pools):
         new_pool = Pool(_amount, max_token_amount)
         pools[token_address] = new_pool
@@ -225,8 +226,6 @@ def addLiquidity(
     contribution_gte_max = new_contribution > min_contribution_amount
     within_limits = token_lte_max and contribution_gte_max
 
-    print(delta_y, max_token_amount)
-
     if within_limits == False:
         raise "RequestedRatesCannotBeFulfilled delta_y: %i" % delta_y
     
@@ -256,34 +255,35 @@ def addLiquidity(
     })
 
 
-
 def removeLiquidity():
     pass
 
-addLiquidity(
-    "0xee4caad51521da0f284b64c4d5e9d024bfa852e6",
-    1000,
-    5000,
-    4000
-)
 
-print("")
-print('###################################################################################################')
-print("")
-print(pools)
-print(balances)
-print(total_contributions)
+def testLiquidity():
+    addLiquidity(
+        "0xee4caad51521da0f284b64c4d5e9d024bfa852e6",
+        1000,
+        5000,
+        4000
+    )
 
-addLiquidity(
-    "0xee4caad51521da0f284b64c4d5e9d024bfa852e6",
-    2000,
-    20000,
-    4000
-)
+    print("")
+    print('###################################################################################################')
+    print("")
+    print(pools)
+    print(balances)
+    print(total_contributions)
 
-print("")
-print('###################################################################################################')
-print("")
-print(pools)
-print(balances)
-print(total_contributions)
+    addLiquidity(
+        "0xee4caad51521da0f284b64c4d5e9d024bfa852e6",
+        2000,
+        20000,
+        4000
+    )
+
+    print("")
+    print('###################################################################################################')
+    print("")
+    print(pools)
+    print(balances)
+    print(total_contributions)
