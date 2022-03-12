@@ -183,15 +183,7 @@ contract PaySwapContract
 field pools : Map ByStr20 Pool = Emp ByStr20 Pool
 field balances : Map ByStr20 (Map ByStr20 Uint128) = Emp ByStr20 (Map ByStr20 Uint128)
 field total_contributions : Map ByStr20 Uint128 = Emp ByStr20 Uint128
-
-procedure ThrowIfExpired(deadline_block: BNum)
-  current_block <- & BLOCKNUMBER;
-  is_not_expired = builtin blt current_block deadline_block;
-  match is_not_expired with
-  | True =>
-  | False => e = { _exception : "TransactionExpired" }; throw e
-  end
-end
+field output_after_fee : Uint256 = Uint256 9970
 
 procedure ThrowIfZero(number: Uint128)
   gt_zero = uint128_gt number zero;
@@ -201,28 +193,135 @@ procedure ThrowIfZero(number: Uint128)
   end
 end
 
+procedure ThrowIfZil(address : ByStr20)
+  is_zil = builtin eq address zero_address;
+  match is_zil with
+  | False =>
+  | True => e = { _exception : "InvalidParameter" }; throw e
+  end
+end
+
+procedure DoSwap(
+  pool : Pool,
+  token_address : ByStr20,
+  input : Coins,
+  output : Coins,
+  input_from : ByStr20,
+  output_to : ByStr20
+)
+  match pool with
+  | Pool x y => (* zil reserve, token reserve *)
+
+    (* update new pool balances *)
+    match input with
+    | Coins input_denom input_amount =>
+      match output with
+      | Coins output_denom output_amount =>
+        match input_denom with
+        | Zil =>
+          new_pool =
+            let new_x = builtin add x input_amount in
+            let new_y = builtin sub y output_amount in
+          Pool new_x new_y;
+          pools[token_address] := new_pool
+        | Token t =>
+          new_pool =
+            let new_x = builtin sub x output_amount in
+            let new_y = builtin add y input_amount in
+          Pool new_x new_y;
+          pools[token_address] := new_pool
+        end
+      end
+    end;
+
+    (* emit swap event *)
+    e = {
+      _eventname: "Swapped";
+      pool: token_address; address: _sender;
+      input: input; output: output
+    };
+    event e
+  end
+end
+
+procedure SwapUsingZIL(
+  token_address : ByStr20,
+  direction : SwapDirection,
+  exact_side : ExactSide,
+  exact_amount : Uint128,
+  limit_amount : Uint128,
+  recipient_address : ByStr20
+)
+  ThrowIfZero exact_amount;
+  ThrowIfZero limit_amount;
+
+  after_fee <- output_after_fee;
+  maybe_pool <- pools[token_address];
+  result =
+    let option_limit_amount = Some {Uint128} limit_amount in
+    let swap = Swap maybe_pool direction exact_side exact_amount option_limit_amount after_fee in
+    resultFor swap;
+
+  match result with
+  | Error msg => e = { _exception : msg }; throw e
+  | Result pool calculated_amount =>
+    token = Token token_address;
+    match exact_side with
+    | ExactInput =>
+      match direction with
+      | ZilToToken =>
+        input = Coins zil exact_amount;
+        output = Coins token calculated_amount;
+        DoSwap pool token_address input output _sender recipient_address
+      | TokenToZil =>
+        input = Coins token exact_amount;
+        output = Coins zil calculated_amount;
+        DoSwap pool token_address input output _sender recipient_address
+      end
+    | ExactOutput =>
+      match direction with
+      | ZilToToken =>
+        input = Coins zil calculated_amount;
+        output = Coins token exact_amount;
+        DoSwap pool token_address input output _sender recipient_address
+      | TokenToZil =>
+        input = Coins token calculated_amount;
+        output = Coins zil exact_amount;
+        DoSwap pool token_address input output _sender recipient_address
+      end
+    end
+  end
+end
+
+
 transition AddLiquidity(
   token_address : ByStr20,
   min_contribution_amount : Uint128,
   max_token_amount : Uint128,
-  amt : Uint128
+  amount : Uint128
 )
-  ThrowIfZero amt;
+  ThrowIfZil token_address;
+  ThrowIfZero amount;
   ThrowIfZero max_token_amount;
 
   token = Token token_address;
 
+  (* accept all zil *)
+  zils_in = Coins zil amount;
+
   maybe_pool <- pools[token_address];
   match maybe_pool with
   | None =>
-    new_pool = Pool amt max_token_amount;
+    tokens_in = Coins token max_token_amount;
+
+    new_pool = Pool amount max_token_amount;
     pools[token_address] := new_pool;
     e1 = { _eventname: "PoolCreated"; pool: token_address };
     event e1;
 
-    balances[token_address][_sender] := amt;
-    total_contributions[token_address] := amt;
-    e2 = { _eventname: "Mint"; pool: token_address; address: _sender; amount: amt };
+    balances[token_address][_sender] := amount;
+    total_contributions[token_address] := amount;
+    e2 = { _eventname: "Mint"; pool: token_address; address: _sender; amount: amount };
     event e2
   | Some pool =>
     match pool with
@@ -230,13 +329,13 @@ transition AddLiquidity(
 
       (* dY = dX * Y / X + 1 *)
       (* dX is always the QA transferred *)
-      delta_y = frac amt x y;
+      result = frac amount x y;
+      delta_y = builtin add result one;
       maybe_total_contribution <- total_contributions[token_address];
       total_contribution = unwrapOrZero maybe_total_contribution;
-      ThrowIfZero total_contribution;
 
-      (* (amt *  total_contribution) / x *)
-      new_contribution = frac amt x total_contribution;
+      (* (amount *  total_contribution) / x *)
+      new_contribution = frac amount x total_contribution;
       within_limits =
         let token_lte_max = uint128_le delta_y max_token_amount in
         let contribution_gte_max = uint128_ge new_contribution min_contribution_amount in
@@ -246,8 +345,10 @@ transition AddLiquidity(
       | False => e = { _exception : "RequestedRatesCannotBeFulfilled" ; delta_y: delta_y }; throw e
       end;
 
+      tokens_in = Coins token delta_y;
+
       new_pool =
-        let new_x = builtin add x amt in
+        let new_x = builtin add x amount in
         let new_y = builtin add y delta_y in
         Pool new_x new_y;
       pools[token_address] := new_pool;
@@ -270,3 +371,86 @@ transition AddLiquidity(
   end
 end
 
+transition RemoveLiquidity(
+  token_address : ByStr20,
+  contribution_amount : Uint128,
+  min_zil_amount : Uint128,
+  min_token_amount : Uint128
+)
+  ThrowIfZero contribution_amount;
+  ThrowIfZero min_zil_amount;
+  ThrowIfZero min_token_amount;
+
+  token = Token token_address;
+
+  maybe_pool <- pools[token_address];
+  match maybe_pool with
+  | None => e = { _exception : "MissingPool" }; throw e
+  | Some pool =>
+    match pool with
+    | Pool x y => (* zil reserve, token reserve *)
+      maybe_total_contribution <- total_contributions[token_address];
+      total_contribution = unwrapOrZero maybe_total_contribution;
+
+      zil_amount = frac contribution_amount total_contribution x;
+      token_amount = frac contribution_amount total_contribution y;
+      within_limits =
+        let zil_ok = uint128_ge zil_amount min_zil_amount in
+        let token_ok = uint128_ge token_amount min_token_amount in
+        andb zil_ok token_ok;
+      match within_limits with
+      | True =>
+      | False => e = { _exception : "RequestedRatesCannotBeFulfilled" }; throw e
+      end;
+
+      existing_balance <- balances[token_address][_sender];
+      b = unwrapOrZero existing_balance;
+      new_balance = builtin sub b contribution_amount;
+      new_total_contribution = builtin sub total_contribution contribution_amount;
+      new_pool =
+        let new_x = builtin sub x zil_amount in
+        let new_y = builtin sub y token_amount in
+        Pool new_x new_y;
+
+      (* Improve *)
+      is_pool_now_empty = poolEmpty new_pool;
+      match is_pool_now_empty with
+      | True =>
+        (* clear pool entries when there is no more liquidity *)
+        delete pools[token_address];
+        delete balances[token_address];
+        delete total_contributions[token_address]
+      | False =>
+        pools[token_address] := new_pool;
+        balances[token_address][_sender] := new_balance;
+        total_contributions[token_address] := new_total_contribution
+      end;
+
+      zils_out = Coins zil zil_amount;
+      tokens_out = Coins token token_amount;
+
+      e = { _eventname: "Burnt"; pool: token_address; address: _sender; amount: contribution_amount };
+      event e
+    end
+  end
+end
+
+transition SwapExactZILForTokens(
+  token_address : ByStr20,
+  min_token_amount : Uint128,
+  amount : Uint128,
+  recipient_address : ByStr20
+)
+  direction = ZilToToken;
+  exact_side = ExactInput;
+  exact_amount = amount;
+  limit_amount = min_token_amount;
+
+  SwapUsingZIL
+    token_address
+    direction
+    exact_side
+    exact_amount
+    limit_amount
+    recipient_address
+end
