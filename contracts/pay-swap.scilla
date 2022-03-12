@@ -738,7 +738,8 @@ transition RemoveLiquidity(
         let token_ok = uint128_ge token_amount min_token_amount in
         andb zil_ok token_ok;
       match within_limits with
-      | True => | False => e = { _exception : "RequestedRatesCannotBeFulfilled" }; throw e
+      | True =>
+      | False => e = { _exception : "RequestedRatesCannotBeFulfilled" }; throw e
       end;
 
       existing_balance <- balances[token_address][_sender];
@@ -750,6 +751,7 @@ transition RemoveLiquidity(
         let new_y = builtin sub y token_amount in
         Pool new_x new_y;
 
+      (* Improve *)
       is_pool_now_empty = poolEmpty new_pool;
       match is_pool_now_empty with
       | True =>

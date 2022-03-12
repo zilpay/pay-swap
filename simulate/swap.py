@@ -1,23 +1,20 @@
+from ast import Delete
 import enum
 from typing import Dict
 
-class Zil:
-    pass
-
 class Token:
+    Zil = "Zil"
+    Token = None
     def __init__(self, addr: str) -> None:
         self.Token = addr
 
-class Denom:
-    Zil = Zil
-
-    def __init__(self, token: str):
-        self.Token = Token(token)
-
 class Coins:
-    def __init__(self, denom: Denom, amount: int) -> None:
+    def __init__(self, denom: Token, amount: int) -> None:
         self.denom = denom
         self.amount = amount
+
+    def __repr__(self):
+        return self.denom
 
 class Pool:
     def __init__(self, x: int, y: int) -> None:
@@ -174,26 +171,112 @@ def result_for(swap: Swap):
     amount = amount_for(pool, direction, exact_side, exact_amount, after_fee)
     is_limit = within_limits(amount, exact_side, maybe_limit_amount)
 
-    print(is_limit, amount, exact_side, maybe_limit_amount)
-
     if is_limit == False:
         raise "RequestedRatesCannotBeFulfilled"
     
-    return [pool.serialize(), amount]
+    return [pool, amount]
 
+def pool_empty(pool: Pool):
+    return pool.x < ONE or pool.x < ONE
 
 # FILEDS
 pools = dict() #  Map ByStr20 Pool
 balances = dict() # Map ByStr20 (Map ByStr20 Uint128)
 total_contributions = dict()  # Map ByStr20 Uint128
+output_after_fee = 9970
 # FILEDS
+
+def do_swap(
+    pool: Pool,
+    token_address: str,
+    _input: Coins,
+    output: Coins,
+    input_from: str,
+    output_to: str
+):
+    input_denom = _input.denom
+    input_amount = _input.amount
+    output_amount = output.amount
+
+    if input_denom == Token.Zil:
+        new_x = pool.x + input_amount
+        new_y = pool.y - output_amount
+        new_pool = Pool(new_x, new_y)
+        pools[token_address] = new_pool
+    elif input_denom == Token(token_address).Token:
+        new_x = pool.x - output_amount
+        new_y = pool.y + input_amount
+        new_pool = Pool(new_x, new_y)
+        pools[token_address] = new_pool
+    
+    print({
+      "_eventname": "Swapped",
+      "pool": token_address,
+      "input": _input,
+      "output": output
+    })
+
+def swap_using_zil(
+    token_address : str,
+    direction : int,
+    exact_side : int,
+    exact_amount : int,
+    limit_amount : int
+):
+    after_fee = output_after_fee
+
+    if token_address not in pools:
+        raise "MissingPool"
+
+    pool = pools[token_address]
+
+    swap = Swap(exact_amount, limit_amount, after_fee, pool)
+    swap.ExactSide = exact_side
+    swap.SwapDirection = direction
+    result = result_for(swap)
+
+    pool = result[0]
+    calculated_amount = result[1]
+    token = Token(token_address)
+
+    if exact_side == ExactSide.ExactInput:
+        if direction == SwapDirection.ZilToToken:
+            _input = Coins(Token.Zil, exact_amount)
+            output = Coins(token.Token, calculated_amount)
+            return do_swap(pool, token_address, _input, output, "_sender", "recipient_address")
+        if direction == SwapDirection.TokenToZil:
+            _input = Coins(token.Token, exact_amount)
+            output = Coins(Token.Zil, calculated_amount)
+            return do_swap(pool, token_address, _input, output, "_sender", "recipient_address")
+
+    if exact_side == ExactSide.ExactOutput:
+        if direction == SwapDirection.ZilToToken:
+            _input = Coins(Token.Zil, calculated_amount)
+            output = Coins(Token.Token, exact_amount)
+            return do_swap(pool, token_address, _input, output, "_sender", "recipient_address")
+        if direction == SwapDirection.TokenToZil:
+            _input = Coins(token.Token, calculated_amount)
+            output = Coins(Token.Zil, exact_amount)
+            return do_swap(pool, token_address, _input, output, "_sender", "recipient_address")
+
+    raise "msing exact_side"
+
+
+def print_state():
+    print("")
+    print('###################################################################################################')
+    print("")
+    print(pools)
+    print(balances)
+    print(total_contributions)
+
 
 def addLiquidity(
     token_address : str,
     min_contribution_amount : int,
     max_token_amount : int,
     _amount: int,
-    _sender = "0x8617B72E22090f0c13167865147eC48a6dB788ff"
+    _sender
 ):
     # TESTED
     if (token_address not in pools):
@@ -216,14 +299,18 @@ def addLiquidity(
     
     pool = pools[token_address]
     result = frac(_amount, pool.x, pool.y)
-    delta_y = result + ONE
+
+    # dY = dX * Y / X
+    delta_y = result # removed one.
 
     mb_total_contribution = unpack_dict(total_contributions, token_address)
     total_contribution = unwrap_or_zero(mb_total_contribution)
+
+    # (amt *  total_contribution) / x
     new_contribution = frac(_amount, pool.x, total_contribution)
 
-    token_lte_max = delta_y < max_token_amount
-    contribution_gte_max = new_contribution > min_contribution_amount
+    token_lte_max = delta_y <= max_token_amount
+    contribution_gte_max = new_contribution >= min_contribution_amount
     within_limits = token_lte_max and contribution_gte_max
 
     if within_limits == False:
@@ -254,36 +341,123 @@ def addLiquidity(
         "amount": new_contribution
     })
 
+def removeLiquidity(
+    token_address : str,
+    contribution_amount : int,
+    min_zil_amount: int,
+    min_token_amount : int,
+    _sender
+):
+    if token_address not in pools:
+        raise "MissingPool"
+    
+    pool = pools[token_address]
+    total_contribution = total_contributions[token_address]
+    zil_amount = frac(contribution_amount, total_contribution, pool.x)
+    token_amount = frac(contribution_amount, total_contribution, pool.y)
 
-def removeLiquidity():
-    pass
+    zil_ok = zil_amount >= min_zil_amount
+    token_ok = token_amount >= min_token_amount
+    within_limits = zil_ok and token_ok
 
+    if within_limits == False:
+        raise "RequestedRatesCannotBeFulfilled"
+    
+    existing_balance = balances[token_address][_sender]
+    
+    new_balance = existing_balance - contribution_amount
+    new_total_contribution = total_contribution - contribution_amount
+    
+    new_x = pool.x - zil_amount
+    new_y = pool.y - token_amount
+    new_pool = Pool(new_x, new_y)
+
+    is_pool_now_empty = pool_empty(new_pool)
+
+    if is_pool_now_empty:
+        del pools[token_address]
+        del balances[token_address]
+        del total_contributions[token_address]
+    else:
+        pools[token_address] = new_pool;
+        balances[token_address][_sender] = new_balance;
+        total_contributions[token_address] = new_total_contribution
+    
+    print({
+        "_eventname": "Burnt",
+        "pool": token_address,
+        "address": _sender,
+        "amount": contribution_amount
+    })
+
+def swapExactZILForTokens(
+    token_address: str,
+    min_token_amount: int,
+    _amount: int
+):
+    direction = SwapDirection.ZilToToken;
+    exact_side = ExactSide.ExactInput;
+    exact_amount = _amount;
+    limit_amount = min_token_amount;
+
+    swap_using_zil(token_address, direction, exact_side, exact_amount, limit_amount)
 
 def testLiquidity():
-    addLiquidity(
-        "0xee4caad51521da0f284b64c4d5e9d024bfa852e6",
-        1000,
-        5000,
-        4000
-    )
-
-    print("")
-    print('###################################################################################################')
-    print("")
-    print(pools)
-    print(balances)
-    print(total_contributions)
+    tokenAddr = "0xee4caad51521da0f284b64c4d5e9d024bfa852e6"
+    sender = "0x8617B72E22090f0c13167865147eC48a6dB788ff"
+    token_amount = 50000000000
+    zil_amount = 1000000000000000
+    min_contribution_amount = 0
 
     addLiquidity(
-        "0xee4caad51521da0f284b64c4d5e9d024bfa852e6",
-        2000,
-        20000,
-        4000
+        tokenAddr,
+        min_contribution_amount,
+        token_amount,
+        zil_amount,
+        sender
     )
 
-    print("")
-    print('###################################################################################################')
-    print("")
-    print(pools)
-    print(balances)
-    print(total_contributions)
+    print_state()
+
+    addLiquidity(
+        tokenAddr,
+        min_contribution_amount,
+        token_amount,
+        zil_amount,
+        sender
+    )
+
+    print_state()
+
+    removeLiquidity(
+        tokenAddr,
+        zil_amount,
+        zil_amount,
+        token_amount,
+        sender
+    )
+
+    print_state()
+
+def testSwap():
+    tokenAddr = "0xee4caad51521da0f284b64c4d5e9d024bfa852e6"
+    sender = "0x8617B72E22090f0c13167865147eC48a6dB788ff"
+    token_amount = 50000000000
+    zil_amount = 1000000000000000
+    min_contribution_amount = 0
+
+    addLiquidity(
+        tokenAddr,
+        min_contribution_amount,
+        token_amount,
+        zil_amount,
+        sender
+    )
+
+    print_state()
+
+    swapExactZILForTokens(tokenAddr, 5000000, 1000000000000)
+
+    print_state()
+# testLiquidity()
+testSwap()

@@ -230,8 +230,7 @@ transition AddLiquidity(
 
       (* dY = dX * Y / X + 1 *)
       (* dX is always the QA transferred *)
-      result = frac amt x y;
-      delta_y = builtin add result one;
+      delta_y = frac amt x y;
       maybe_total_contribution <- total_contributions[token_address];
       total_contribution = unwrapOrZero maybe_total_contribution;
       ThrowIfZero total_contribution;
@@ -270,5 +269,4 @@ transition AddLiquidity(
     end
   end
 end
-
 
