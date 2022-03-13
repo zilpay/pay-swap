@@ -733,6 +733,7 @@ transition RemoveLiquidity(
 
       zil_amount = frac contribution_amount total_contribution x;
       token_amount = frac contribution_amount total_contribution y;
+
       within_limits =
         let zil_ok = uint128_ge zil_amount min_zil_amount in
         let token_ok = uint128_ge token_amount min_token_amount in

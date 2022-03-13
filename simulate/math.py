@@ -7,12 +7,10 @@ fee = 9970
 FEE_DENOM = 10000
 
 def swap_token_for_zil():
-  input_amount_after_fee = _amount * fee
-  numerator = input_amount_after_fee * pool["zrc_reserve"]
-  denominator = (pool["zil_reserve"] * FEE_DENOM) + input_amount_after_fee
+  numerator = _amount * pool["zrc_reserve"]
+  denominator = pool["zil_reserve"] + _amount
   result = numerator // denominator
 
-  print("input_amount_after_fee", input_amount_after_fee)
   print("numerator", numerator)
   print("denominator", denominator)
   print("result", result)
@@ -36,5 +34,13 @@ def swap_zil_for_token():
 
   print(pool)
 
-swap_zil_for_token()
+def frac(d: int, x: int, y: int) -> int:
+    # TESTED
+    # computes the amount of the fraction x / d that is in y
+    d_times_y = d * y
+    return d_times_y // x
+
+# swap_zil_for_token()
 # swap_token_for_zil()
+
+print(frac(_amount, pool["zil_reserve"], 1000000000000000))

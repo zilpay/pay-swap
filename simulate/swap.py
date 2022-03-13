@@ -314,9 +314,9 @@ def print_state():
 
 
 def addLiquidity(
-    token_address : str,
-    min_contribution_amount : int,
-    max_token_amount : int,
+    token_address: str,
+    min_contribution_amount: int,
+    max_token_amount: int,
     _amount: int,
     _sender
 ):
