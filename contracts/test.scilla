@@ -201,6 +201,57 @@ procedure ThrowIfZil(address : ByStr20)
   end
 end
 
+procedure Send(coins : Coins, to_address : ByStr20)
+  match coins with
+  | Coins denom amount =>
+    match denom with
+    | Zil =>
+      e = {
+        _eventname: "AddFunds";
+        to: to_address;
+        amount: amount
+      };
+      event e
+    | Token token =>
+      e = {
+        _eventname: "Transfer";
+        to: to_address;
+        amount: amount;
+        token: token
+      };
+      event e
+    end
+  end
+end
+
+procedure Receive(coins : Coins)
+  match coins with
+  | Coins denom amount =>
+    match denom with
+    | Zil =>
+      needs_refund = uint128_gt _amount amount;
+      accept;
+      match needs_refund with
+      | True =>
+        refund =
+          let refund_amount = builtin sub _amount amount in
+          Coins zil refund_amount;
+        Send refund _sender
+      | False => (* do nothing *)
+      end
+    | Token token =>
+      e = {
+        _eventname: "TransferFrom";
+        token: token;
+        from: _sender;
+        to: _this_address;
+        amount: amount
+      };
+      event e
+    end
+  end
+end
+
 procedure DoSwap(
   pool : Pool,
   token_address : ByStr20,
@@ -232,6 +283,19 @@ procedure DoSwap(
           pools[token_address] := new_pool
         end
       end
+    end;
+
+    (* do receive / send *)
+    sending_from_self = builtin eq input_from _this_address;
+    match sending_from_self with
+    | True => (* don't do anything on internal send *)
+    | False => Receive input (* accept the expected input *)
+    end;
+
+    sending_to_self = builtin eq output_to _this_address;
+    match sending_to_self with
+    | True => (* don't do anything on internal receive *)
+    | False => Send output output_to (* send the expected output *)
     end;
 
     (* emit swap event *)
@@ -445,6 +509,26 @@ transition SwapExactZILForTokens(
   exact_side = ExactInput;
   exact_amount = amount;
   limit_amount = min_token_amount;
+
+  SwapUsingZIL
+    token_address
+    direction
+    exact_side
+    exact_amount
+    limit_amount
+    recipient_address
+end
+
+transition SwapExactTokensForZIL(
+  token_address : ByStr20,
+  token_amount : Uint128,
+  min_zil_amount : Uint128,
+  recipient_address : ByStr20
+)
+  direction = TokenToZil;
+  exact_side = ExactInput;
+  exact_amount = token_amount;
+  limit_amount = min_zil_amount;
 
   SwapUsingZIL
     token_address

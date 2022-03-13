@@ -52,6 +52,7 @@ class Swap:
 ZERO = 0
 ONE = 1
 FEE_DENOM = 10000 # fee denominated in basis points (1 b.p. = 0.01%)
+ZERO_ADDR = "0x0000000000000000000000000000000000000000"
 
 def unwrap_or_zero(wrapped: int = None) -> int:
     if (wrapped):
@@ -160,7 +161,7 @@ def result_for(swap: Swap):
     # computes the resultant amount for the given swap.
     direction = swap.SwapDirection
     exact_side = swap.ExactSide
-    exact_amount = swap.amount
+    exact_amount = swap.amount # _amount
     maybe_limit_amount = swap.limit
     after_fee = swap.fee
 
@@ -186,6 +187,41 @@ total_contributions = dict()  # Map ByStr20 Uint128
 output_after_fee = 9970
 # FILEDS
 
+def send(coins: Coins, to_address: str):
+    amount = coins.amount
+    if coins.denom == Token.Zil:
+        print({
+            "_eventname": "AddFunds",
+            "to": to_address,
+            "amount": amount
+        })
+        return
+
+    print({
+        "_eventname": "Transfer",
+        "to": to_address,
+        "amount": amount,
+        "token": coins.denom
+    })
+
+def receive(coins: Coins):
+    amount = coins.amount
+
+    if coins.denom == Token.Zil:
+        print({
+            "_eventname": "Accept",
+            "amount": amount
+        })
+        return
+    
+    print({
+        "_eventname": "TransferFrom",
+        "token": coins.denom,
+        "from": "_sender",
+        "to": ZERO_ADDR,
+        "amount": amount
+    })
+
 def do_swap(
     pool: Pool,
     token_address: str,
@@ -209,6 +245,12 @@ def do_swap(
         new_pool = Pool(new_x, new_y)
         pools[token_address] = new_pool
     
+    if input_from != ZERO_ADDR:
+        receive(_input)
+
+    if output_to != ZERO_ADDR:
+        send(output, output_to)
+
     print({
       "_eventname": "Swapped",
       "pool": token_address,
@@ -348,6 +390,7 @@ def removeLiquidity(
     min_token_amount : int,
     _sender
 ):
+    # TESTED
     if token_address not in pools:
         raise "MissingPool"
     
@@ -395,12 +438,25 @@ def swapExactZILForTokens(
     min_token_amount: int,
     _amount: int
 ):
-    direction = SwapDirection.ZilToToken;
-    exact_side = ExactSide.ExactInput;
-    exact_amount = _amount;
-    limit_amount = min_token_amount;
+    direction = SwapDirection.ZilToToken
+    exact_side = ExactSide.ExactInput
+    exact_amount = _amount
+    limit_amount = min_token_amount
 
     swap_using_zil(token_address, direction, exact_side, exact_amount, limit_amount)
+
+def swapExactTokensForZIL(
+    token_address: str,
+    token_amount: int,
+    min_zil_amount : int
+):
+    direction = SwapDirection.TokenToZil
+    exact_side = ExactSide.ExactInput
+    exact_amount = token_amount
+    limit_amount = min_zil_amount
+
+    swap_using_zil(token_address, direction, exact_side, exact_amount, limit_amount)
+
 
 def testLiquidity():
     tokenAddr = "0xee4caad51521da0f284b64c4d5e9d024bfa852e6"
@@ -457,6 +513,8 @@ def testSwap():
     print_state()
 
     swapExactZILForTokens(tokenAddr, 5000000, 1000000000000)
+    print_state()
+    swapExactTokensForZIL(tokenAddr, 10000000000, 100000000)
 
     print_state()
 # testLiquidity()
