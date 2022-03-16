@@ -164,14 +164,14 @@ def result_for(swap: Swap):
     exact_amount = swap.amount # _amount
     maybe_limit_amount = swap.limit
     after_fee = swap.fee
-
+    
     if swap.pool == None:
         raise "MissingPool"
 
     pool = swap.pool
     amount = amount_for(pool, direction, exact_side, exact_amount, after_fee)
     is_limit = within_limits(amount, exact_side, maybe_limit_amount)
-
+    
     if is_limit == False:
         raise "RequestedRatesCannotBeFulfilled"
     
@@ -280,7 +280,7 @@ def swap_using_zil(
     pool = result[0]
     calculated_amount = result[1]
     token = Token(token_address)
-
+    
     if exact_side == ExactSide.ExactInput:
         if direction == SwapDirection.ZilToToken:
             _input = Coins(Token.Zil, exact_amount)
@@ -410,7 +410,7 @@ def removeLiquidity(
     
     new_balance = existing_balance - contribution_amount
     new_total_contribution = total_contribution - contribution_amount
-    
+
     new_x = pool.x - zil_amount
     new_y = pool.y - token_amount
     new_pool = Pool(new_x, new_y)
@@ -512,9 +512,9 @@ def testSwap():
 
     print_state()
 
-    swapExactZILForTokens(tokenAddr, 1, 500000000)
+    swapExactZILForTokens(tokenAddr, 1, 999999999999999)
     print_state()
-    # swapExactTokensForZIL(tokenAddr, 10000000000, 100000000)
+    swapExactTokensForZIL(tokenAddr, 24999999999, 1)
 
     print_state()
 # testLiquidity()

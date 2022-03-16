@@ -196,8 +196,8 @@ let pool_from_denom =
       let new_y = builtin sub y output_amount in
         Pair {Uint128 Uint128} new_x new_y
     | Token =>
-      let new_x = builtin add x output_amount in
-      let new_y = builtin sub y input_amount in
+      let new_x = builtin sub x output_amount in
+      let new_y = builtin add y input_amount in
         Pair {Uint128 Uint128} new_x new_y
     end
 
@@ -274,7 +274,7 @@ procedure MakeSwap(
   (* emit swap event *)
   e = {
     _eventname: "Swapped";
-    pool: token_address;
+    token: token_address;
     address: _sender;
     input: input_amount;
     output: output_amount
@@ -289,7 +289,6 @@ procedure SwapZIL(
   pool: Pair Uint128 Uint128,
   exact_amount: Uint128,
   limit_amount: Uint128,
-  deadline_block: BNum,
   recipient_address: ByStr20
 )
   match pool with
@@ -501,7 +500,6 @@ end
 
 transition SwapExactZILForTokens(
   token_address : ByStr20,
-  (* _amount: the zil amount to be sent in *)
   min_token_amount : Uint128,
   deadline_block : BNum,
   recipient_address : ByStr20
@@ -512,17 +510,42 @@ transition SwapExactZILForTokens(
   | Some pool =>
     direction = ZilToToken;
     exact_side = ExactInput;
-    exact_amount = _amount;
-    limit_amount = min_token_amount;
 
     SwapZIL
       token_address
       direction
       exact_side
       pool
-      exact_amount
-      limit_amount
-      deadline_block
+      _amount
+      min_token_amount
+      recipient_address
+  | None =>
+    err = CodePoolMissing;
+    ThrowError err
+  end
+end
+
+transition SwapExactTokensForZIL(
+  token_address : ByStr20,
+  token_amount : Uint128,
+  min_zil_amount : Uint128,
+  deadline_block : BNum,
+  recipient_address : ByStr20
+)
+  some_pool <- pools[token_address];
+
+  match some_pool with
+  | Some pool =>
+    direction = TokenToZil;
+    exact_side = ExactInput;
+
+    SwapZIL
+      token_address
+      direction
+      exact_side
+      pool
+      token_amount
+      min_zil_amount
       recipient_address
   | None =>
     err = CodePoolMissing;
