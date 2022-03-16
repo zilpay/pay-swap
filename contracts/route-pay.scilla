@@ -1,11 +1,13 @@
 scilla_version 0
 
-import PairUtils
+import PairUtils IntUtils BoolUtils
 
 library PaySwapLib
 
 type Error =
   | CodeNotContractOwner
+  | CodePoolMissing
+  | CodeNotWithin
 
 type Denom =
   | Zil
@@ -30,6 +32,7 @@ type Swap =
     Uint128 (* limit *)
 
 
+let zero_address = 0x0000000000000000000000000000000000000000
 (* fee denominated in basis points (1 b.p. = 0.01%) *)
 let fee_denom = Uint256 10000
 let zero256 = Uint256 0
@@ -47,6 +50,16 @@ let make_error =
       {
         _exception: "Sender is not contract owner";
         code: Int32 -1
+      }
+    | CodePoolMissing =>
+      {
+        _exception: "Pool is missing";
+        code: Int32 -2
+      }
+    | CodeNotWithin =>
+      {
+        _exception: "Amount is not within";
+        code: Int32 -3
       }
     end
 
@@ -70,6 +83,14 @@ let grow_u128: Uint128 -> Uint256 =
     match some_big with
     | Some big => big
     | None => zero256 (* should never happen *)
+    end
+
+let fall_u256: Uint256 -> Uint128 =
+  fun (v : Uint256) =>
+    let some_u128 = builtin to_uint128 v in
+    match some_u128 with
+    | Some u => u
+    | None => zero128 (* should never happen *)
     end
 
 (* computes the amount of the fraction x / d that is in y *)
@@ -138,16 +159,14 @@ let within_limits: Uint128 -> Uint128 -> ExactSide -> Bool =
       uint128_ge limit_amount result_amount
     end
 
-(* computes the result amount for the given swap *)
-let result_for =
-  fun (exact_amount: Uint256) =>
-  fun (limit_amount: Uint256) =>
-  fun (zil_reserve: Uint256) =>
-  fun (token_reserve: Uint256) =>
-  fun (direction: SwapDirection) =>
-  fun (exact_side: ExactSide) =>
-    amount_for direction exact_side exact_amount zil_reserve token_reserve
-
+let check_within_limits =
+  fun (amount: Uint128) =>
+  fun (max_token_amount: Uint128) =>
+  fun (new_contribution: Uint128) =>
+  fun (min_contribution_amount: Uint128) =>
+    let token_lte_max = uint128_le amount max_token_amount in
+    let contribution_gte_max = uint128_ge new_contribution min_contribution_amount in
+      andb token_lte_max contribution_gte_max
 
 contract PaySwapContract
 ()
@@ -171,13 +190,145 @@ procedure ThrowError(err : Error)
   throw e
 end
 
-transition Test(zil_reserve: Uint256, zrc_reserve: Uint256, amount: Uint256, total_contribution: Uint256)
-  fres = fraction amount zil_reserve total_contribution;
-  output = output_for amount zil_reserve zrc_reserve;
+(* EVENTS *)
+procedure emitMintPool(token_address: ByStr20, address: ByStr20, amount: Uint128)
   e = {
-    _eventname: "Test";
-    fres: fres;
-    output: output
+    _eventname: "Mint";
+    pool: token_address;
+    address: address;
+    amount: amount
   };
   event e
+end
+
+(* EVENTS *)
+
+procedure SwapUsingZIL(
+  token_address: ByStr20,
+  direction: SwapDirection,
+  exact_side: ExactSide,
+  pool: Pair Uint128 Uint128,
+  exact_amount: Uint128,
+  limit_amount: Uint128,
+  deadline_block: BNum,
+  recipient_address: ByStr20
+)
+  match pool with
+  | Pair zil_reserve token_reserve =>
+    zil_reserve_u256 = grow_u128 zil_reserve;
+    token_reserve_u256 = grow_u128 token_reserve;
+    exact_amount_u256 = grow_u128 exact_amount;
+
+    result_u256 = amount_for direction exact_side exact_amount_u256 zil_reserve_u256 token_reserve_u256;
+    amount_u128 = fall_u256 result_u256;
+    is_within_limits = within_limits amount_u128 limit_amount exact_side;
+    e = {
+      _eventname: "Test";
+      amount: amount_u128;
+      is_limits: is_within_limits
+    };
+    event e
+  end
+end
+
+transition Test(zil_reserve: Uint128, token_reserve: Uint128, amount: Uint128, min_token_amount: Uint128)
+  current_block <- & BLOCKNUMBER;
+
+  pool = Pair {Uint128 Uint128} zil_reserve token_reserve;
+  direction = ZilToToken;
+  exact_side = ExactInput;
+  limit_amount = min_token_amount;
+
+  SwapUsingZIL
+    zero_address
+    direction
+    exact_side
+    pool
+    amount
+    limit_amount
+    current_block
+    zero_address
+end
+
+transition AddLiquidity(
+  token_address : ByStr20,
+  min_contribution_amount : Uint128,
+  max_token_amount : Uint128,
+  deadline_block : BNum
+)
+  some_pool <- pools[token_address];
+
+  match some_pool with
+  | None =>
+    (* INIT Pool *)
+    new_pool = Pair {Uint128 Uint128} _amount max_token_amount;
+
+    pools[token_address] := new_pool;
+    balances[token_address][_sender] := _amount;
+    total_contributions[token_address] := _amount;
+
+    pool_event = {
+      _eventname: "PoolCreated";
+      pool: token_address
+    };
+    event pool_event;
+    emitMintPool token_address _sender _amount
+  | Some pool =>
+    match pool with
+    | Pair zil_reserve token_reserve =>
+      some_total_contribution <- total_contributions[token_address];
+
+      total_contribution = option_uint128 zero128 some_total_contribution;
+
+      total_contribution_u256 = grow_u128 total_contribution;
+      amount_u256 = grow_u128 _amount;
+      zil_reserve_u256 = grow_u128 zil_reserve;
+      token_reserve_u256 = grow_u128 token_reserve;
+
+      (* dY = dX * Y / X *)
+      (* dX is always the QA transferred *)
+      result_u256 = fraction amount_u256 zil_reserve_u256 token_reserve_u256;
+      result_u128 = fall_u256 result_u256;
+
+      (* (_amount *  total_contribution) / x *)
+      new_contribution_u256 = fraction amount_u256 token_reserve_u256 total_contribution_u256;
+      new_contribution_u128 = fall_u256 new_contribution_u256;
+
+      is_within_limits = check_within_limits
+        result_u128
+        max_token_amount
+        new_contribution_u128
+        min_contribution_amount;
+      
+      match is_within_limits with
+      | True =>
+      | False =>
+        err = CodeNotWithin;
+        ThrowError err
+      end;
+
+      (* Receive tokens_in; *)
+
+      new_pool =
+        let new_x = builtin add zil_reserve _amount in
+        let new_y = builtin add token_reserve result_u128 in
+          Pair {Uint128 Uint128} new_x new_y;
+      pools[token_address] := new_pool;
+
+      existing_balance <- balances[token_address][_sender];
+
+      match existing_balance with
+      | Some balance =>
+        new_balance = builtin add balance new_contribution_u128;
+        balances[token_address][_sender] := new_balance
+      | None =>
+        balances[token_address][_sender] := new_contribution_u128
+      end;
+
+      new_total_contribution = builtin add total_contribution new_contribution_u128;
+      total_contributions[token_address] := new_total_contribution;
+
+      emitMintPool token_address _sender new_contribution_u128
+    end
+  end
 end

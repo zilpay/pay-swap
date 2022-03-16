@@ -40,7 +40,6 @@ def frac(d: int, x: int, y: int) -> int:
     d_times_y = d * y
     return d_times_y // x
 
-# swap_zil_for_token()
+swap_zil_for_token()
 # swap_token_for_zil()
 
-print(frac(_amount, pool["zil_reserve"], 1000000000000000))
