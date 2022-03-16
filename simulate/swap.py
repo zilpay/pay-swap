@@ -517,5 +517,5 @@ def testSwap():
     swapExactTokensForZIL(tokenAddr, 10000000000, 100000000)
 
     print_state()
-# testLiquidity()
-testSwap()
+testLiquidity()
+# testSwap()

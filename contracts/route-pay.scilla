@@ -8,6 +8,7 @@ type Error =
   | CodeNotContractOwner
   | CodePoolMissing
   | CodeNotWithin
+  | CodeCannotBeZero
 
 type Denom =
   | Zil
@@ -37,6 +38,7 @@ let zero_address = 0x0000000000000000000000000000000000000000
 let fee_denom = Uint256 10000
 let zero256 = Uint256 0
 let zero128 = Uint128 0
+let one128 = Uint128 1
 
 let one_msg = 
   fun (msg : Message) => 
@@ -60,6 +62,11 @@ let make_error =
       {
         _exception: "Amount is not within";
         code: Int32 -3
+      }
+    | CodeCannotBeZero =>
+      {
+        _exception: "Value cannot be zero";
+        code: Int32 -4
       }
     end
 
@@ -168,6 +175,13 @@ let check_within_limits =
     let contribution_gte_max = uint128_ge new_contribution min_contribution_amount in
       andb token_lte_max contribution_gte_max
 
+let is_empty_pool =
+  fun (x: Uint128) =>
+  fun (y: Uint128) =>
+    let x_empty = builtin lt x one128 in
+    let y_empty = builtin lt y one128 in
+      orb x_empty y_empty
+
 contract PaySwapContract
 ()
 
@@ -202,6 +216,18 @@ procedure emitMintPool(token_address: ByStr20, address: ByStr20, amount: Uint128
 end
 
 (* EVENTS *)
+
+(* Checkers *)
+procedure ThrowIfZero(v: Uint128)
+  is_zero = builtin eq v zero128;
+  match is_zero with
+  | False =>
+  | True =>
+    err = CodeCannotBeZero;
+    ThrowError err
+  end
+end
+(* Checkers *)
 
 procedure SwapUsingZIL(
   token_address: ByStr20,
@@ -256,6 +282,7 @@ transition AddLiquidity(
   max_token_amount : Uint128,
   deadline_block : BNum
 )
+  (* ADD checks *)
   some_pool <- pools[token_address];
 
   match some_pool with
@@ -330,5 +357,92 @@ transition AddLiquidity(
 
       emitMintPool token_address _sender new_contribution_u128
     end
+  end
+end
+
+transition RemoveLiquidity(
+  token_address: ByStr20,
+  contribution_amount: Uint128,
+  min_zil_amount: Uint128,
+  min_token_amount: Uint128,
+  deadline_block: BNum
+)
+  some_pool <- pools[token_address];
+
+  match some_pool with
+  | Some pool =>
+    match pool with
+    | Pair zil_reserve token_reserve =>
+      some_total_contribution <- total_contributions[token_address];
+
+      total_contribution_u128 = option_uint128 zero128 some_total_contribution;
+
+      ThrowIfZero total_contribution_u128;
+
+      zil_reserve_u256 = grow_u128 zil_reserve;
+      token_reserve_u256 = grow_u128 token_reserve;
+
+      contribution_amount_u256 = grow_u128 contribution_amount;
+      total_contribution_u256 = grow_u128 total_contribution_u128;
+
+      zil_amount_u256 = fraction contribution_amount_u256 total_contribution_u256 zil_reserve_u256;
+      token_amount_u256 = fraction contribution_amount_u256 total_contribution_u256 token_reserve_u256;
+
+      zil_amount_u128 = fall_u256 zil_amount_u256;
+      token_amount_u128 = fall_u256 token_amount_u256;
+
+      is_within_limits =
+        let zil_ok = uint128_ge zil_amount_u128 min_zil_amount in
+        let token_ok = uint128_ge token_amount_u128 min_token_amount in
+          andb zil_ok token_ok;
+
+      match is_within_limits with
+      | True =>
+      | False =>
+        err = CodeNotWithin;
+        ThrowError err
+      end;
+
+      some_existing_balance <- balances[token_address][_sender];
+      
+      existing_balance = option_uint128 zero128 some_existing_balance;
+
+      new_balance = builtin sub existing_balance contribution_amount;
+      new_total_contribution = builtin sub total_contribution_u128 contribution_amount;
+
+      new_x = builtin sub zil_reserve zil_amount_u128;
+      new_y = builtin sub token_reserve token_amount_u128;
+      is_empty_pool = is_empty_pool new_x new_y;
+
+      match is_empty_pool with
+      | True =>
+        (* clear pool entries when there is no more liquidity *)
+        delete pools[token_address];
+        delete balances[token_address];
+        delete total_contributions[token_address]
+      | False =>
+        new_pool = Pair {Uint128 Uint128} new_x new_y;
+
+        pools[token_address] := new_pool;
+        balances[token_address][_sender] := new_balance;
+        total_contributions[token_address] := new_total_contribution
+      end;
+
+      (* zils_out = Coins zil zil_amount;
+      tokens_out = Coins token token_amount;
+      Send zils_out _sender;
+      Send tokens_out _sender; *)
+
+      e = {
+        _eventname: "Burnt";
+        pool: token_address;
+        address: _sender;
+        amount: contribution_amount
+      };
+      event e
+    end
+  | None =>
+    err = CodePoolMissing;
+    ThrowError err
   end
 end
