@@ -51,7 +51,7 @@ class Swap:
 
 ZERO = 0
 ONE = 1
-FEE_DENOM = 10000 # fee denominated in basis points (1 b.p. = 0.01%)
+FEE_DENOM = 1 # fee denominated in basis points (1 b.p. = 0.01%)
 ZERO_ADDR = "0x0000000000000000000000000000000000000000"
 
 def unwrap_or_zero(wrapped: int = None) -> int:
@@ -184,7 +184,7 @@ def pool_empty(pool: Pool):
 pools = dict() #  Map ByStr20 Pool
 balances = dict() # Map ByStr20 (Map ByStr20 Uint128)
 total_contributions = dict()  # Map ByStr20 Uint128
-output_after_fee = 9970
+output_after_fee = 1
 # FILEDS
 
 def send(coins: Coins, to_address: str):
@@ -512,10 +512,10 @@ def testSwap():
 
     print_state()
 
-    swapExactZILForTokens(tokenAddr, 5000000, 1000000000000)
+    swapExactZILForTokens(tokenAddr, 1, 500000000)
     print_state()
-    swapExactTokensForZIL(tokenAddr, 10000000000, 100000000)
+    # swapExactTokensForZIL(tokenAddr, 10000000000, 100000000)
 
     print_state()
-testLiquidity()
-# testSwap()
+# testLiquidity()
+testSwap()

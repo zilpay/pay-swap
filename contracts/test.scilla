@@ -20,7 +20,7 @@ type ResultOrError =
 let zero = Uint128 0
 let one = Uint128 1
 let min_liquidity = Uint128 1000000000000000 (* 1000 ZIL *)
-let fee_denom = Uint256 10000 (* fee denominated in basis points (1 b.p. = 0.01%) *)
+let fee_denom = Uint256 1 (* fee denominated in basis points (1 b.p. = 0.01%) *)
 let zero_address = 0x0000000000000000000000000000000000000000
 let zil = Zil
 let true = True
@@ -183,7 +183,7 @@ contract PaySwapContract
 field pools : Map ByStr20 Pool = Emp ByStr20 Pool
 field balances : Map ByStr20 (Map ByStr20 Uint128) = Emp ByStr20 (Map ByStr20 Uint128)
 field total_contributions : Map ByStr20 Uint128 = Emp ByStr20 Uint128
-field output_after_fee : Uint256 = Uint256 9970
+field output_after_fee : Uint256 = Uint256 1
 
 procedure ThrowIfZero(number: Uint128)
   gt_zero = uint128_gt number zero;
