@@ -318,7 +318,7 @@ transition AddLiquidity(
       result_u128 = fall_u256 result_u256;
 
       (* (_amount *  total_contribution) / x *)
-      new_contribution_u256 = fraction amount_u256 token_reserve_u256 total_contribution_u256;
+      new_contribution_u256 = fraction amount_u256 zil_reserve_u256 total_contribution_u256;
       new_contribution_u128 = fall_u256 new_contribution_u256;
 
       is_within_limits = check_within_limits

@@ -390,12 +390,12 @@ transition AddLiquidity(
   | Some pool =>
     match pool with
     | Pool x y => (* zil reserve, token reserve *)
+      maybe_total_contribution <- total_contributions[token_address];
 
       (* dY = dX * Y / X + 1 *)
       (* dX is always the QA transferred *)
       result = frac amount x y;
       delta_y = builtin add result one;
-      maybe_total_contribution <- total_contributions[token_address];
       total_contribution = unwrapOrZero maybe_total_contribution;
 
       (* (amount *  total_contribution) / x *)
