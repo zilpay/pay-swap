@@ -1,6 +1,6 @@
 scilla_version 0
 
-import PairUtils IntUtils BoolUtils
+import IntUtils BoolUtils
 
 library PaySwapLib
 
@@ -23,23 +23,16 @@ type ExactSide =
   | ExactInput
   | ExactOutput
 
-(* pool, amount, limit amount, fee *)
-type Swap =
-  | Swap of
-    (* x, y = zil_reserve, token_reserve *)
-    (Pair Uint256 Uint256)
-    (* Direction of the swap zil to token or token to zil *)
-    SwapDirection
-    Uint128 (* amount *)
-    Uint128 (* limit *)
-
 
 let zero_address = 0x0000000000000000000000000000000000000000
 (* fee denominated in basis points (1 b.p. = 0.01%) *)
-let fee_denom = Uint256 10000
 let zero256 = Uint256 0
 let zero128 = Uint128 0
 let one128 = Uint128 1
+let fee_demon = Uint256 10000
+let fee = Uint128 9970
+
+let pair_fee = Pair {Uint128 Uint128} fee fee
 
 let tt = True
 let ff = False
@@ -90,9 +83,6 @@ let option_value =
     | Some v => v
     | None => default
     end
-
-let first_pair = @fst Uint128 Uint128
-let second_pair = @snd Uint128 Uint128
 
 let option_uint128 = @option_value Uint128
 
@@ -211,6 +201,12 @@ let is_empty_pool =
     let y_empty = builtin lt y one128 in
       orb x_empty y_empty
 
+let get_fee =
+  fun (value: Uint256) =>
+  fun (fee: Uint256) =>
+    let v_f = builtin mul value fee in
+      builtin div v_f fee_demon
+
 contract PaySwapContract
 ()
 
@@ -224,10 +220,17 @@ field total_contributions: Map ByStr20 Uint128 = Emp ByStr20 Uint128
 (* token -> _sender -> started_zil_reserve *)
 field balances: Map ByStr20 (Map ByStr20 Uint128) = Emp ByStr20 (Map ByStr20 Uint128)
 
-(* fee for each swap *)
-field swap_fee: Uint256 = Uint256 9970
+(* Rewards for LP provider. token / rewards_pool *)
+field rewards: Map ByStr20 Uint128 = Emp ByStr20 Uint128
 
-field callback_addr: ByStr20 = 0x8617b72e22090f0c13167865147ec48a6db788ff
+(* Rewards for LP provider. token / rewards_pool *)
+field contract_balance: Uint128 = zero128
+
+(* fee for each swap - zil_fee, token_fee *)
+field swap_fee: Pair Uint128 Uint128 = pair_fee
+
+(* A callback for interact with another contract. *)
+field callback_addr: ByStr20 = zero_address
 
 
 procedure ThrowError(err : Error)
@@ -245,7 +248,6 @@ procedure emitMintPool(token_address: ByStr20, address: ByStr20, amount: Uint128
   };
   event e
 end
-
 (* EVENTS *)
 
 (* Checkers *)
@@ -259,6 +261,32 @@ procedure ThrowIfZero(v: Uint128)
   end
 end
 (* Checkers *)
+
+procedure ReceiveRewards(
+  token_address: ByStr20,
+  zil_rewards: Uint128,
+  tokens_rewards: Uint128
+)
+  is_zil_zero = builtin eq zil_rewards zero128;
+  is_tokens_zero = builtin eq tokens_rewards zero128;
+
+  match is_zil_zero with
+  | True =>
+  | False =>
+    contract_rewards <- contract_balance;
+    new_contract_rewards = builtin add contract_rewards zil_rewards;
+    contract_balance := new_contract_rewards
+  end;
+
+  match is_tokens_zero with
+  | True =>
+  | False =>
+    some_lp_rewards <- rewards[token_address];
+    lp_rewards = option_uint128 zero128 some_lp_rewards;
+    new_lp_rewards = builtin add lp_rewards tokens_rewards;
+    rewards[token_address] := new_lp_rewards
+  end
+end
 
 procedure CallBack(
   input_token: ByStr20,
@@ -407,11 +435,9 @@ procedure SwapZIL(
       exact_amount_u256
       zil_reserve_u256
       token_reserve_u256;
-    calculated_amount_u128 = fall_u256 calculated_amount_u256;
+    output_amount_u128 = fall_u256 calculated_amount_u256;
+    is_within_limits = within_limits output_amount_u128 limit_amount exact_side;
 
-    (* TODO: Add commisions *)
-
-    is_within_limits = within_limits calculated_amount_u128 limit_amount exact_side;
     match is_within_limits with
     | False =>
       err = CodeRatesCannotBeFulfilled;
@@ -422,7 +448,7 @@ procedure SwapZIL(
         direction
         exact_side
         exact_amount
-        calculated_amount_u128
+        output_amount_u128
         zil_reserve
         token_reserve
         tt
@@ -702,7 +728,9 @@ transition SwapExactTokensForTokens(
             zil_reserve1_u256
             token_reserve1_u256;
           calculated_amount_u128 = fall_u256 calculated_amount_u256;
-          is_within_limits = within_limits calculated_amount_u128 min_token1_amount exact_side1;
+          is_within_limits = within_limits
+            calculated_amount_u128
+            min_token1_amount exact_side1;
 
           match is_within_limits with
           | False =>
@@ -719,7 +747,6 @@ transition SwapExactTokensForTokens(
               zil_reserve0
               token_reserve0
               ff;
-
             SwapOptions
               token1_address
               direction1
@@ -729,6 +756,7 @@ transition SwapExactTokensForTokens(
               zil_reserve1
               token_reserve1
               ff;
+            (* ReceiveRewards *)
             CallBack
               token0_address
               token1_address
