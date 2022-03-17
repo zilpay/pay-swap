@@ -538,3 +538,55 @@ transition SwapExactTokensForZIL(
     limit_amount
     recipient_address
 end
+
+transition SwapExactTokensForTokens(
+  token0_address : ByStr20,
+  token1_address : ByStr20,
+  token0_amount : Uint128, (* the token0 amount to be sent in *)
+  min_token1_amount : Uint128, (* min token0 amount that must be received for the txn to not revert *)
+  deadline_block : BNum,
+  recipient_address : ByStr20
+)
+  ThrowUnlessInitialized;
+  ThrowIfExpired deadline_block;
+  ThrowIfZero token0_amount;
+  ThrowIfZero min_token1_amount;
+  ThrowIfSameAddress token0_address token1_address;
+
+  after_fee <- output_after_fee;
+  maybe_pool0 <- pools[token0_address];
+
+  result0 =
+    let direction = TokenToZil in
+    let exact_side = ExactInput in
+    let limit_amount = None {Uint128} in
+    let swap = Swap maybe_pool0 direction exact_side token0_amount limit_amount after_fee in
+      resultFor swap;
+
+  match result0 with
+  | Error msg => e = { _exception : msg }; throw e
+  | Result pool0 zil_intermediate_amount =>
+    maybe_pool1 <- pools[token1_address];
+
+    result1 =
+      let direction = ZilToToken in
+      let exact_side = ExactInput in
+      let limit_amount = Some {Uint128} min_token1_amount in
+      let swap = Swap maybe_pool1 direction exact_side zil_intermediate_amount limit_amount after_fee in
+        resultFor swap;
+
+    match result1 with
+    | Error msg => e = { _exception : msg }; throw e
+    | Result pool1 output_amount =>
+      DoSwapTwice
+        pool0
+        token0_address
+        pool1
+        token1_address
+        token0_amount
+        zil_intermediate_amount
+        output_amount
+        recipient_address
+    end
+  end
+end

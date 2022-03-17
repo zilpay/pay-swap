@@ -271,6 +271,8 @@ procedure MakeSwap(
     token_reserve;
   pools[token_address] := new_pool;
 
+  (* TODO: add sender *)
+
   (* emit swap event *)
   e = {
     _eventname: "Swapped";
@@ -280,6 +282,33 @@ procedure MakeSwap(
     output: output_amount
   };
   event e
+end
+
+procedure SwapOptions(
+  token_address: ByStr20,
+  direction: SwapDirection,
+  exact_side: ExactSide,
+  exact_amount: Uint128,
+  calculated_amount: Uint128,
+  zil_reserve: Uint128,
+  token_reserve: Uint128
+)
+  match exact_side with
+  | ExactInput =>
+    match direction with
+    | ZilToToken =>
+      MakeSwap token_address exact_amount calculated_amount zil zil_reserve token_reserve
+    | TokenToZil =>
+      MakeSwap token_address exact_amount calculated_amount zrc zil_reserve token_reserve
+    end
+  | ExactOutput =>
+    match direction with
+    | ZilToToken =>
+      MakeSwap token_address calculated_amount exact_amount zil zil_reserve token_reserve
+    | TokenToZil =>
+      MakeSwap token_address calculated_amount exact_amount zrc zil_reserve token_reserve
+    end
+  end
 end
 
 procedure SwapZIL(
@@ -300,28 +329,22 @@ procedure SwapZIL(
     calculated_amount_u256 = amount_for direction exact_side exact_amount_u256 zil_reserve_u256 token_reserve_u256;
     calculated_amount_u128 = fall_u256 calculated_amount_u256;
 
+    (* TODO: Add commisions *)
+
     is_within_limits = within_limits calculated_amount_u128 limit_amount exact_side;
     match is_within_limits with
     | False =>
       err = CodeRatesCannotBeFulfilled;
       ThrowError err
     | True =>
-      match exact_side with
-      | ExactInput =>
-        match direction with
-        | ZilToToken =>
-          MakeSwap token_address exact_amount calculated_amount_u128 zil zil_reserve token_reserve
-        | TokenToZil =>
-          MakeSwap token_address exact_amount calculated_amount_u128 zrc zil_reserve token_reserve
-        end
-      | ExactOutput =>
-        match direction with
-        | ZilToToken =>
-          MakeSwap token_address calculated_amount_u128 exact_amount zil zil_reserve token_reserve
-        | TokenToZil =>
-          MakeSwap token_address calculated_amount_u128 exact_amount zrc zil_reserve token_reserve
-        end
-      end
+      SwapOptions
+        token_address
+        direction
+        exact_side
+        exact_amount
+        calculated_amount_u128
+        zil_reserve
+        token_reserve
     end
   end
 end
@@ -547,6 +570,89 @@ transition SwapExactTokensForZIL(
       token_amount
       min_zil_amount
       recipient_address
+  | None =>
+    err = CodePoolMissing;
+    ThrowError err
+  end
+end
+
+transition SwapExactTokensForTokens(
+  token0_address: ByStr20,
+  token1_address: ByStr20,
+  token0_amount: Uint128,
+  min_token1_amount: Uint128,
+  deadline_block: BNum,
+  recipient_address: ByStr20
+)
+  some_pool0 <- pools[token0_address];
+  some_pool1 <- pools[token1_address];
+
+  match some_pool0 with
+  | Some pool0 =>
+    match some_pool1 with
+    | Some pool1 =>
+      exact_amount0_u256 = grow_u128 token0_amount;
+
+      match pool0 with
+      | Pair zil_reserve0 token_reserve0 =>
+        direction0 = TokenToZil;
+        exact_side0 = ExactInput;
+        zil_reserve0_u256 = grow_u128 zil_reserve0;
+        token_reserve0_u256 = grow_u128 token_reserve0;
+
+        zil_intermediate_amount_u256 = amount_for
+          direction0
+          exact_side0
+          exact_amount0_u256
+          zil_reserve0_u256
+          token_reserve0_u256;
+
+        match pool1 with
+        | Pair zil_reserve1 token_reserve1 =>
+          direction1 = ZilToToken;
+          exact_side1 = ExactInput;
+          zil_reserve1_u256 = grow_u128 zil_reserve1;
+          token_reserve1_u256 = grow_u128 token_reserve1;
+
+          calculated_amount_u256 = amount_for
+            direction1
+            exact_side1
+            zil_intermediate_amount_u256
+            zil_reserve1_u256
+            token_reserve1_u256;
+          calculated_amount_u128 = fall_u256 calculated_amount_u256;
+          is_within_limits = within_limits calculated_amount_u128 min_token1_amount exact_side1;
+
+          match is_within_limits with
+          | False =>
+            err = CodeRatesCannotBeFulfilled;
+            ThrowError err
+          | True =>
+            zil_intermediate_amount_u128 = fall_u256 zil_intermediate_amount_u256;
+            SwapOptions
+              token0_address
+              direction0
+              exact_side0
+              token0_amount
+              zil_intermediate_amount_u128
+              zil_reserve0
+              token_reserve0;
+
+            SwapOptions
+              token1_address
+              direction1
+              exact_side1
+              zil_intermediate_amount_u128
+              calculated_amount_u128
+              zil_reserve1
+              token_reserve1
+          end
+        end
+      end
+    | None =>
+      err = CodePoolMissing;
+      ThrowError err
+    end
   | None =>
     err = CodePoolMissing;
     ThrowError err

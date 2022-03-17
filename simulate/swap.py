@@ -496,6 +496,8 @@ def testLiquidity():
     print_state()
 
 def testSwap():
+    tokenAddr1 = "0x8617B72E22090f0c13167865147eC48a6dB788ff"
+    
     tokenAddr = "0xee4caad51521da0f284b64c4d5e9d024bfa852e6"
     sender = "0x8617B72E22090f0c13167865147eC48a6dB788ff"
     token_amount = 50000000000
