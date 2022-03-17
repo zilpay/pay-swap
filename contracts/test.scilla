@@ -308,6 +308,38 @@ procedure DoSwap(
   end
 end
 
+procedure DoSwapTwice(
+  pool0 : Pool,
+  token0_address : ByStr20,
+  pool1 : Pool,
+  token1_address : ByStr20,
+  input_amount : Uint128,
+  intermediate_amount : Uint128,
+  output_amount : Uint128,
+  recipient_address : ByStr20
+)
+  input = let token0 = Token token0_address in
+    Coins token0 input_amount;
+  intermediate = Coins zil intermediate_amount;
+  output = let token1 = Token token1_address in
+    Coins token1 output_amount;
+  DoSwap
+    pool0
+    token0_address
+    input
+    intermediate
+    _sender
+    _this_address
+  ;
+  DoSwap
+    pool1
+    token1_address
+    intermediate
+    output
+    _this_address
+    recipient_address
+end
+
 procedure SwapUsingZIL(
   token_address : ByStr20,
   direction : SwapDirection,
@@ -547,12 +579,6 @@ transition SwapExactTokensForTokens(
   deadline_block : BNum,
   recipient_address : ByStr20
 )
-  ThrowUnlessInitialized;
-  ThrowIfExpired deadline_block;
-  ThrowIfZero token0_amount;
-  ThrowIfZero min_token1_amount;
-  ThrowIfSameAddress token0_address token1_address;
-
   after_fee <- output_after_fee;
   maybe_pool0 <- pools[token0_address];
 

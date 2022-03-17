@@ -41,6 +41,9 @@ let zero256 = Uint256 0
 let zero128 = Uint128 0
 let one128 = Uint128 1
 
+let tt = True
+let ff = False
+
 let zil = Zil
 let zrc = Token
 
@@ -224,6 +227,8 @@ field balances: Map ByStr20 (Map ByStr20 Uint128) = Emp ByStr20 (Map ByStr20 Uin
 (* fee for each swap *)
 field swap_fee: Uint256 = Uint256 9970
 
+field callback_addr: ByStr20 = 0x8617b72e22090f0c13167865147ec48a6db788ff
+
 
 procedure ThrowError(err : Error)
   e = make_error err;
@@ -255,6 +260,39 @@ procedure ThrowIfZero(v: Uint128)
 end
 (* Checkers *)
 
+procedure CallBack(
+  input_token: ByStr20,
+  output_output: ByStr20,
+  input_amount: Uint128,
+  output_amount: Uint128,
+  callback: Bool
+)
+  match callback with
+  | True =>
+    recipient <- callback_addr;
+
+    is_empty = builtin eq recipient zero_address;
+
+    match is_empty with
+    | False =>
+      call_callback = {
+        _tag: "SwapCallBack";
+        _recipient: recipient;
+        _amount: zero128;
+        initiator: _sender;
+        input_amount: input_amount;
+        output_amount: output_amount;
+        input_token: input_token;
+        output_output: output_output
+      };
+      msg = one_msg call_callback;
+      send msg
+    | True =>
+    end
+  | False =>
+  end
+end
+
 procedure MakeSwap(
   token_address: ByStr20,
   input_amount: Uint128,
@@ -273,7 +311,7 @@ procedure MakeSwap(
 
   (* TODO: add sender *)
 
-  (* emit swap event *)
+  (* TODO: Remove event *)
   e = {
     _eventname: "Swapped";
     token: token_address;
@@ -291,22 +329,59 @@ procedure SwapOptions(
   exact_amount: Uint128,
   calculated_amount: Uint128,
   zil_reserve: Uint128,
-  token_reserve: Uint128
+  token_reserve: Uint128,
+  callback: Bool
 )
   match exact_side with
   | ExactInput =>
     match direction with
     | ZilToToken =>
-      MakeSwap token_address exact_amount calculated_amount zil zil_reserve token_reserve
+      MakeSwap
+        token_address
+        exact_amount
+        calculated_amount
+        zil
+        zil_reserve
+        token_reserve;
+      CallBack
+        zero_address
+        token_address
+        exact_amount
+        calculated_amount
+        callback
     | TokenToZil =>
-      MakeSwap token_address exact_amount calculated_amount zrc zil_reserve token_reserve
+      MakeSwap
+        token_address
+        exact_amount
+        calculated_amount
+        zrc
+        zil_reserve
+        token_reserve;
+      CallBack
+        token_address
+        zero_address
+        exact_amount
+        calculated_amount
+        callback
     end
   | ExactOutput =>
     match direction with
     | ZilToToken =>
-      MakeSwap token_address calculated_amount exact_amount zil zil_reserve token_reserve
+      MakeSwap
+        token_address
+        calculated_amount
+        exact_amount
+        zil
+        zil_reserve
+        token_reserve
     | TokenToZil =>
-      MakeSwap token_address calculated_amount exact_amount zrc zil_reserve token_reserve
+      MakeSwap
+        token_address
+        calculated_amount
+        exact_amount
+        zrc
+        zil_reserve
+        token_reserve
     end
   end
 end
@@ -326,7 +401,12 @@ procedure SwapZIL(
     token_reserve_u256 = grow_u128 token_reserve;
     exact_amount_u256 = grow_u128 exact_amount;
 
-    calculated_amount_u256 = amount_for direction exact_side exact_amount_u256 zil_reserve_u256 token_reserve_u256;
+    calculated_amount_u256 = amount_for
+      direction
+      exact_side
+      exact_amount_u256
+      zil_reserve_u256
+      token_reserve_u256;
     calculated_amount_u128 = fall_u256 calculated_amount_u256;
 
     (* TODO: Add commisions *)
@@ -345,6 +425,7 @@ procedure SwapZIL(
         calculated_amount_u128
         zil_reserve
         token_reserve
+        tt
     end
   end
 end
@@ -636,7 +717,8 @@ transition SwapExactTokensForTokens(
               token0_amount
               zil_intermediate_amount_u128
               zil_reserve0
-              token_reserve0;
+              token_reserve0
+              ff;
 
             SwapOptions
               token1_address
@@ -646,6 +728,13 @@ transition SwapExactTokensForTokens(
               calculated_amount_u128
               zil_reserve1
               token_reserve1
+              ff;
+            CallBack
+              token0_address
+              token1_address
+              token0_amount
+              calculated_amount_u128
+              tt
           end
         end
       end
