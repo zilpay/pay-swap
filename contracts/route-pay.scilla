@@ -11,6 +11,8 @@ type Error =
   | CodeCannotBeZero
   | CodeRatesCannotBeFulfilled
   | CodeNotOperator
+  | CodeTransactionExpired
+  | CodeEmptyAddress
 
 type Denom =
   | Zil
@@ -79,6 +81,16 @@ let make_error =
       {
         _exception: "Sender is not operator";
         code: Int32 -6
+      }
+    | CodeTransactionExpired =>
+      {
+        _exception: "Deadline blocknumber is expired";
+        code: Int32 -7
+      }
+    | CodeEmptyAddress =>
+      {
+        _exception: "Incorrect address";
+        code: Int32 -8
       }
     end
 
@@ -238,6 +250,7 @@ field owner: ByStr20 = init_owner
 (* operators approvals for onwer transfer *)
 field transfer_owner_approvals: Map ByStr20 (Map ByStr20 Bool) = Emp ByStr20 (Map ByStr20 Bool)
 
+(* Numbers of approvals for transfer owner. *)
 field number_approvals: Uint32 = zero32
 
 (* POOL token -> Pari{zil_reserve, token_reserve} *)
@@ -283,7 +296,7 @@ end
 (* EVENTS *)
 
 (* Checkers *)
-procedure ThrowIfZero(v: Uint128)
+procedure ThrowZero(v: Uint128)
   is_zero = builtin eq v zero128;
   match is_zero with
   | False =>
@@ -310,6 +323,27 @@ procedure OperatorOnly()
   | True =>
   | False =>
     err = CodeNotOperator;
+    ThrowError err
+  end
+end
+
+procedure ThrowExpired(deadline_block: BNum)
+  current_block <- & BLOCKNUMBER;
+  is_not_expired = builtin blt current_block deadline_block;
+  match is_not_expired with
+  | True =>
+  | False =>
+    err = CodeTransactionExpired;
+    ThrowError err
+  end
+end
+
+procedure ThrowZeroAddress(address: ByStr20)
+  is_zil = builtin eq address zero_address;
+  match is_zil with
+  | False =>
+  | True =>
+    err = CodeEmptyAddress;
     ThrowError err
   end
 end
@@ -620,7 +654,11 @@ transition AddLiquidity(
   max_token_amount : Uint128,
   deadline_block : BNum
 )
-  (* ADD checks *)
+  ThrowExpired deadline_block;
+  ThrowZeroAddress token_address;
+  ThrowZero _amount;
+  ThrowZero max_token_amount;
+
   some_pool <- pools[token_address];
 
   match some_pool with
@@ -708,6 +746,11 @@ transition RemoveLiquidity(
   min_token_amount: Uint128,
   deadline_block: BNum
 )
+  ThrowExpired deadline_block;
+  ThrowZero contribution_amount;
+  ThrowZero min_zil_amount;
+  ThrowZero min_token_amount;
+
   some_pool <- pools[token_address];
 
   match some_pool with
@@ -718,7 +761,7 @@ transition RemoveLiquidity(
 
       total_contribution_u128 = option_uint128 zero128 some_total_contribution;
 
-      ThrowIfZero total_contribution_u128;
+      ThrowZero total_contribution_u128;
 
       zil_reserve_u256 = grow_u128 zil_reserve;
       token_reserve_u256 = grow_u128 token_reserve;
@@ -792,6 +835,11 @@ transition SwapExactZILForTokens(
   deadline_block : BNum,
   recipient_address : ByStr20
 )
+  ThrowExpired deadline_block;
+  ThrowZero _amount;
+  ThrowZero min_token_amount;
+  ThrowZeroAddress recipient_address;
+
   some_pool <- pools[token_address];
 
   match some_pool with
@@ -816,12 +864,17 @@ transition SwapExactZILForTokens(
 end
 
 transition SwapExactTokensForZIL(
-  token_address : ByStr20,
-  token_amount : Uint128,
-  min_zil_amount : Uint128,
-  deadline_block : BNum,
-  recipient_address : ByStr20
+  token_address: ByStr20,
+  token_amount: Uint128,
+  min_zil_amount: Uint128,
+  deadline_block: BNum,
+  recipient_address: ByStr20
 )
+  ThrowExpired deadline_block;
+  ThrowZero token_amount;
+  ThrowZero min_zil_amount;
+  ThrowZeroAddress recipient_address;
+
   some_pool <- pools[token_address];
 
   match some_pool with
@@ -851,6 +904,11 @@ transition SwapExactTokensForTokens(
   deadline_block: BNum,
   recipient_address: ByStr20
 )
+  ThrowExpired deadline_block;
+  ThrowZero token0_amount;
+  ThrowZero min_token1_amount;
+  ThrowZeroAddress recipient_address;
+
   some_pool0 <- pools[token0_address];
   some_pool1 <- pools[token1_address];
 
