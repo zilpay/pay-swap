@@ -754,41 +754,50 @@ transition SwapExactTokensForTokens(
 
       match pool0 with
       | Pair zil_reserve0 token_reserve0 =>
-        direction0 = TokenToZil;
-        exact_side0 = ExactInput;
-        zil_reserve0_u256 = grow_u128 zil_reserve0;
-        token_reserve0_u256 = grow_u128 token_reserve0;
+        fee_pari <- swap_fee;
 
-        zil_intermediate_amount_u256 = amount_for
-          direction0
-          exact_side0
-          exact_amount0_u256
-          zil_reserve0_u256
-          token_reserve0_u256;
+        match fee_pari with
+        | Pair zil_fee tokens_fee =>
 
-        match pool1 with
-        | Pair zil_reserve1 token_reserve1 =>
-          direction1 = ZilToToken;
-          exact_side1 = ExactInput;
-          zil_reserve1_u256 = grow_u128 zil_reserve1;
-          token_reserve1_u256 = grow_u128 token_reserve1;
+          direction0 = TokenToZil;
+          exact_side0 = ExactInput;
+          zil_reserve0_u256 = grow_u128 zil_reserve0;
+          token_reserve0_u256 = grow_u128 token_reserve0;
 
-          calculated_amount_u256 = amount_for
-            direction1
-            exact_side1
-            zil_intermediate_amount_u256
-            zil_reserve1_u256
-            token_reserve1_u256;
-          calculated_amount_u128 = fall_u256 calculated_amount_u256;
-          is_within_limits = within_limits
-            calculated_amount_u128
-            min_token1_amount exact_side1;
+          zil_intermediate_amount_u256 = amount_for
+            direction0
+            exact_side0
+            exact_amount0_u256
+            zil_reserve0_u256
+            token_reserve0_u256;
+          amount_token_u256 = get_fee exact_amount0_u256 tokens_fee;
+          tokens_fee_u256 = builtin sub exact_amount0_u256 amount_token_u256;
 
-          match is_within_limits with
-          | False =>
-            err = CodeRatesCannotBeFulfilled;
-            ThrowError err
-          | True =>
+          tokens_fee_u128 = fall_u256 tokens_fee_u256;
+
+          ReceiveRewards token0_address zero128 tokens_fee_u128;
+
+          match pool1 with
+          | Pair zil_reserve1 token_reserve1 =>
+            direction1 = ZilToToken;
+            exact_side1 = ExactInput;
+            zil_reserve1_u256 = grow_u128 zil_reserve1;
+            token_reserve1_u256 = grow_u128 token_reserve1;
+
+            calculated_amount_u256 = amount_for
+              direction1
+              exact_side1
+              zil_intermediate_amount_u256
+              zil_reserve1_u256
+              token_reserve1_u256;
+
+            amount_token0_u256 = get_fee calculated_amount_u256 tokens_fee;
+            tokens_fee0_u256 = builtin sub calculated_amount_u256 amount_token0_u256;
+            amount_token0_u128 = fall_u256 amount_token0_u256;
+            tokens_fee0_u128 = fall_u256 tokens_fee0_u256;
+    
+            CheckLimits amount_token0_u128 min_token1_amount exact_side1;
+
             zil_intermediate_amount_u128 = fall_u256 zil_intermediate_amount_u256;
             SwapOptions
               token0_address
@@ -804,16 +813,16 @@ transition SwapExactTokensForTokens(
               direction1
               exact_side1
               zil_intermediate_amount_u128
-              calculated_amount_u128
+              amount_token0_u128
               zil_reserve1
               token_reserve1
               ff;
-            (* ReceiveRewards *)
+            ReceiveRewards token1_address zero128 tokens_fee_u128;
             CallBack
               token0_address
               token1_address
               token0_amount
-              calculated_amount_u128
+              amount_token0_u128
               tt
           end
         end
