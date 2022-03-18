@@ -222,7 +222,7 @@ let check_operators =
   fun (sender: ByStr20) =>
     let f =
       fun (a: ByStr20) =>
-        builtin eq a zero_address in
+        builtin eq a sender in
     addr_exists f operators
 
 
