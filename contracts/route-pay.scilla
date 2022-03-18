@@ -28,6 +28,7 @@ let zero_address = 0x0000000000000000000000000000000000000000
 (* fee denominated in basis points (1 b.p. = 0.01%) *)
 let zero256 = Uint256 0
 let zero128 = Uint128 0
+let two128 = Uint128 2
 let one128 = Uint128 1
 let fee_demon = Uint256 10000
 let fee = Uint256 9970
@@ -233,6 +234,9 @@ field swap_fee: Pair Uint256 Uint256 = pair_fee
 (* A callback for interact with another contract. *)
 field callback_addr: ByStr20 = zero_address
 
+(* Pool for increase price with every swap. *)
+field rewards_pool: ByStr20 = 0xee4caad51521da0f284b64c4d5e9d024bfa852e6
+
 
 procedure ThrowError(err : Error)
   e = make_error err;
@@ -289,9 +293,26 @@ procedure ReceiveRewards(
   match is_zil_zero with
   | True =>
   | False =>
+    addr_rewards_pool <- rewards_pool;
     contract_rewards <- contract_balance;
-    new_contract_rewards = builtin add contract_rewards zil_rewards;
-    contract_balance := new_contract_rewards
+    some_pool <- pools[addr_rewards_pool];
+
+    match some_pool with
+    | None => 
+      new_contract_rewards = builtin add contract_rewards zil_rewards;
+      contract_balance := new_contract_rewards
+    | Some pool =>
+      half = builtin div zil_rewards two128;
+      new_contract_rewards = builtin add contract_rewards half;
+      contract_balance := new_contract_rewards;
+
+      match pool with
+      | Pair zil tokens =>
+        new_zil = builtin add zil half;
+        new_pool = Pair {Uint128 Uint128} new_zil tokens;
+        pools[addr_rewards_pool] := new_pool
+      end
+    end
   end;
 
   match is_tokens_zero with
