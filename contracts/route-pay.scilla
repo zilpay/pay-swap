@@ -721,6 +721,7 @@ transition RemoveLiquidity(
       end;
 
       CallTransfer _sender token_amount_u128 token_address;
+      AddFunds _sender zil_amount_u128;
 
       e = {
         _eventname: "Burnt";
@@ -897,3 +898,18 @@ transition SwapExactTokensForTokens(
   end
 end
 (* user interactions *)
+
+
+(* callbacks *)
+transition RecipientAcceptTransfer(sender: ByStr20, recipient: ByStr20, amount: Uint128)
+end
+
+transition RecipientAcceptTransferFrom(initiator: ByStr20, sender: ByStr20, recipient: ByStr20, amount: Uint128)
+end
+
+transition TransferFromSuccessCallBack(initiator: ByStr20, sender: ByStr20, recipient: ByStr20, amount: Uint128)
+end
+
+transition TransferSuccessCallBack(sender: ByStr20, recipient: ByStr20, amount: Uint128)
+end
+(* callbacks *)
