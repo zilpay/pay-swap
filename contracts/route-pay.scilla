@@ -30,9 +30,9 @@ let zero256 = Uint256 0
 let zero128 = Uint128 0
 let one128 = Uint128 1
 let fee_demon = Uint256 10000
-let fee = Uint128 9970
+let fee = Uint256 9970
 
-let pair_fee = Pair {Uint128 Uint128} fee fee
+let pair_fee = Pair {Uint256 Uint256} fee fee
 
 let tt = True
 let ff = False
@@ -206,6 +206,7 @@ let get_fee =
   fun (fee: Uint256) =>
     let v_f = builtin mul value fee in
       builtin div v_f fee_demon
+        
 
 contract PaySwapContract
 ()
@@ -227,7 +228,7 @@ field rewards: Map ByStr20 Uint128 = Emp ByStr20 Uint128
 field contract_balance: Uint128 = zero128
 
 (* fee for each swap - zil_fee, token_fee *)
-field swap_fee: Pair Uint128 Uint128 = pair_fee
+field swap_fee: Pair Uint256 Uint256 = pair_fee
 
 (* A callback for interact with another contract. *)
 field callback_addr: ByStr20 = zero_address
@@ -258,6 +259,21 @@ procedure ThrowIfZero(v: Uint128)
   | True =>
     err = CodeCannotBeZero;
     ThrowError err
+  end
+end
+
+procedure CheckLimits(
+  amount: Uint128,
+  limit: Uint128,
+  exact_side: ExactSide
+)
+  is_within_limits = within_limits amount limit exact_side;
+
+  match is_within_limits with
+  | False =>
+    err = CodeRatesCannotBeFulfilled;
+    ThrowError err
+  | True =>
   end
 end
 (* Checkers *)
@@ -423,6 +439,8 @@ procedure SwapZIL(
   limit_amount: Uint128,
   recipient_address: ByStr20
 )
+  fee_pari <- swap_fee;
+
   match pool with
   | Pair zil_reserve token_reserve =>
     zil_reserve_u256 = grow_u128 zil_reserve;
@@ -435,23 +453,57 @@ procedure SwapZIL(
       exact_amount_u256
       zil_reserve_u256
       token_reserve_u256;
-    output_amount_u128 = fall_u256 calculated_amount_u256;
-    is_within_limits = within_limits output_amount_u128 limit_amount exact_side;
+    
+    match fee_pari with
+    | Pair zil_fee tokens_fee =>
+      match direction with
+      | ZilToToken =>
+        amount_token_u256 = get_fee calculated_amount_u256 tokens_fee;
+        amount_zil_u256 = get_fee exact_amount_u256 zil_fee;
 
-    match is_within_limits with
-    | False =>
-      err = CodeRatesCannotBeFulfilled;
-      ThrowError err
-    | True =>
-      SwapOptions
-        token_address
-        direction
-        exact_side
-        exact_amount
-        output_amount_u128
-        zil_reserve
-        token_reserve
-        tt
+        tokens_fee_u256 = builtin sub calculated_amount_u256 amount_token_u256;
+        zil_fee_u256 = builtin sub exact_amount_u256 amount_zil_u256;
+
+        amount_token_u128 = fall_u256 amount_token_u256;
+        tokens_fee_u128 = fall_u256 tokens_fee_u256;
+        zil_fee_u128 = fall_u256 zil_fee_u256;
+
+        CheckLimits amount_token_u128 limit_amount exact_side;
+
+        SwapOptions
+          token_address
+          direction
+          exact_side
+          exact_amount
+          amount_token_u128
+          zil_reserve
+          token_reserve
+          tt;
+        ReceiveRewards token_address zil_fee_u128 tokens_fee_u128
+      | TokenToZil =>
+        amount_zil_u256 = get_fee calculated_amount_u256 zil_fee;
+        amount_token_u256 = get_fee exact_amount_u256 tokens_fee;
+
+        tokens_fee_u256 = builtin sub exact_amount_u256 amount_token_u256;
+        zil_fee_u256 = builtin sub calculated_amount_u256 amount_zil_u256;
+
+        amount_zil_u128 = fall_u256 amount_zil_u256;
+        tokens_fee_u128 = fall_u256 tokens_fee_u256;
+        zil_fee_u128 = fall_u256 zil_fee_u256;
+
+        CheckLimits amount_zil_u128 limit_amount exact_side;
+
+        SwapOptions
+          token_address
+          direction
+          exact_side
+          exact_amount
+          amount_zil_u128
+          zil_reserve
+          token_reserve
+          tt;
+        ReceiveRewards token_address zil_fee_u128 tokens_fee_u128
+      end
     end
   end
 end
