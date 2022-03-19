@@ -1093,6 +1093,15 @@ transition SetNewMinLP(new_min_lp: Uint128)
   OwnerOnly;
   min_lp := new_min_lp
 end
+
+transition ReturnFunds()
+  OwnerOnly;
+
+  bal <- contract_balance;
+  wallet <- owner;
+
+  AddFunds wallet bal
+end
 (* admin interactions *)
 
 
