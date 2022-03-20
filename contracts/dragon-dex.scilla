@@ -2,7 +2,7 @@ scilla_version 0
 
 import IntUtils BoolUtils ListUtils
 
-library PaySwapLib
+library DragonDexLib
 
 type Error =
   | CodeNotContractOwner
@@ -260,7 +260,7 @@ let clac_percent =
       builtin div t_b t
 
 
-contract PaySwapContract
+contract DragonDexContract
 (
   init_owner: ByStr20,
   operators: List ByStr20
