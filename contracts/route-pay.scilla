@@ -14,6 +14,7 @@ type Error =
   | CodeTransactionExpired
   | CodeEmptyAddress
   | CodeMinLP
+  | CodeMinBlocks
 
 type Denom =
   | Zil
@@ -30,8 +31,10 @@ type ExactSide =
 
 let zero_address = 0x0000000000000000000000000000000000000000
 let zero32 = Uint32 0
+let zerobn = BNum 0
 let one32 = Uint32 1
 let zero256 = Uint256 0
+let hundred256 = Uint256 100
 let zero128 = Uint128 0
 let two128 = Uint128 2
 let one128 = Uint128 1
@@ -98,6 +101,11 @@ let make_error =
         _exception: "LP less then min";
         code: Int32 -9
       }
+    | CodeMinBlocks =>
+      {
+        _exception: "Rewards countdown";
+        code: Int32 -10
+      }
     end
 
 let option_value =
@@ -110,6 +118,7 @@ let option_value =
     end
 
 let option_uint128 = @option_value Uint128
+let option_bn = @option_value BNum
 let addr_exists = @list_exists ByStr20
 let list_length_addr = @list_length ByStr20
 
@@ -243,6 +252,13 @@ let check_operators =
         builtin eq a sender in
     addr_exists f operators
 
+let clac_percent =
+  fun (t: Uint256) =>
+  fun (b: Uint256) =>
+  fun (percent: Uint256) =>
+    let t_b = builtin mul b percent in
+      builtin div t_b t
+
 
 contract PaySwapContract
 (
@@ -268,10 +284,7 @@ field total_contributions: Map ByStr20 Uint128 = Emp ByStr20 Uint128
 (* token -> _sender -> started_zil_reserve *)
 field balances: Map ByStr20 (Map ByStr20 Uint128) = Emp ByStr20 (Map ByStr20 Uint128)
 
-(* Rewards for LP provider. token / rewards_pool *)
-field rewards: Map ByStr20 Uint128 = Emp ByStr20 Uint128
-
-(* Rewards for LP provider. token / rewards_pool *)
+(* team rewards in ZILs *)
 field contract_balance: Uint128 = zero128
 
 (* fee for each swap - zil_fee, token_fee *)
@@ -280,11 +293,20 @@ field swap_fee: Pair Uint256 Uint256 = Pair {Uint256 Uint256} fee fee
 (* A callback for interact with another contract. *)
 field callback_addr: ByStr20 = zero_address
 
+(* Rewards for LP provider. token / tokens_amount *)
+field rewards: Map ByStr20 Uint128 = Emp ByStr20 Uint128
+
 (* Pool for increase price with every swap. *)
 field rewards_pool: ByStr20 = zero_address
 
+(* Rewards timer, LP proverid can claim pear some blocks. *)
+field rewards_blocks: Map ByStr20 BNum = Emp ByStr20 BNum
+
+(* min blocks for rewards claim *)
+field min_rewards_blocks: Int256 = Int256 1
+
 (* Min number zil for LP providers. *)
-field min_lp: Uint128 = Uint128 100000000000000
+field min_lp: Uint128 = Uint128 99000000000000
 
 
 procedure ThrowError(err : Error)
@@ -348,8 +370,7 @@ procedure CheckMinLP(lp: Uint128)
   end
 end
 
-procedure ThrowExpired(deadline_block: BNum)
-  current_block <- & BLOCKNUMBER;
+procedure ThrowExpired(deadline_block: BNum, current_block: BNum)
   is_not_expired = builtin blt current_block deadline_block;
   match is_not_expired with
   | True =>
@@ -381,6 +402,23 @@ procedure CheckLimits(
     err = CodeRatesCannotBeFulfilled;
     ThrowError err
   | True =>
+  end
+end
+
+procedure CheckBlockTimer(current_block: BNum)
+  min_blocks <- min_rewards_blocks;
+  some_rewards_blocks <- rewards_blocks[_sender];
+
+  r_blocks = option_bn zerobn some_rewards_blocks;
+
+  diff = builtin bsub current_block r_blocks;
+  check = builtin lt min_blocks diff;
+
+  match check with
+  | True =>
+  | False =>
+    err = CodeMinBlocks;
+    ThrowError err
   end
 end
 (* Checkers *)
@@ -715,7 +753,9 @@ transition AddLiquidity(
   max_token_amount : Uint128,
   deadline_block : BNum
 )
-  ThrowExpired deadline_block;
+  current_block <- & BLOCKNUMBER;
+
+  ThrowExpired deadline_block current_block;
   CheckMinLP _amount;
   ThrowZeroAddress token_address;
   ThrowZero max_token_amount;
@@ -800,7 +840,8 @@ transition AddLiquidity(
 
       emitMintPool token_address _sender new_contribution_u128
     end
-  end
+  end;
+  rewards_blocks[_sender] := current_block
 end
 
 transition RemoveLiquidity(
@@ -810,7 +851,9 @@ transition RemoveLiquidity(
   min_token_amount: Uint128,
   deadline_block: BNum
 )
-  ThrowExpired deadline_block;
+  current_block <- & BLOCKNUMBER;
+
+  ThrowExpired deadline_block current_block;
   ThrowZero contribution_amount;
   ThrowZero min_zil_amount;
   ThrowZero min_token_amount;
@@ -900,7 +943,9 @@ transition SwapExactZILForTokens(
   deadline_block : BNum,
   recipient_address : ByStr20
 )
-  ThrowExpired deadline_block;
+  current_block <- & BLOCKNUMBER;
+
+  ThrowExpired deadline_block current_block;
   ThrowZero _amount;
   ThrowZero min_token_amount;
   ThrowZeroAddress recipient_address;
@@ -935,7 +980,9 @@ transition SwapExactTokensForZIL(
   deadline_block: BNum,
   recipient_address: ByStr20
 )
-  ThrowExpired deadline_block;
+  current_block <- & BLOCKNUMBER;
+
+  ThrowExpired deadline_block current_block;
   ThrowZero token_amount;
   ThrowZero min_zil_amount;
   ThrowZeroAddress recipient_address;
@@ -969,7 +1016,9 @@ transition SwapExactTokensForTokens(
   deadline_block: BNum,
   recipient_address: ByStr20
 )
-  ThrowExpired deadline_block;
+  current_block <- & BLOCKNUMBER;
+
+  ThrowExpired deadline_block current_block;
   ThrowZero token0_amount;
   ThrowZero min_token1_amount;
   ThrowZeroAddress recipient_address;
@@ -1069,6 +1118,57 @@ transition SwapExactTokensForTokens(
     ThrowError err
   end
 end
+
+transition ClaimRewards(token: ByStr20)
+  current_block <- & BLOCKNUMBER;
+  CheckBlockTimer current_block;
+
+  some_rewards <- rewards[token];
+
+  match some_rewards with
+  | Some pool_rewards =>
+    ThrowZero pool_rewards;
+
+    some_total_contributions <- total_contributions[token];
+    some_sender_balance <- balances[token][_sender];
+
+    total_contributions_u128 = option_uint128 zero128 some_total_contributions;
+    sender_balance_u128 = option_uint128 zero128 some_sender_balance;
+
+    total_contributions_u256 = grow_u128 total_contributions_u128;
+    sender_balance_u256 = grow_u128 sender_balance_u128;
+    rewards_pool_u256 = grow_u128 pool_rewards;
+
+    percent_u256 = clac_percent
+      total_contributions_u256
+      sender_balance_u256
+      hundred256;
+
+    amount_rewards_u256 = clac_percent hundred256 rewards_pool_u256 percent_u256;
+    amount_rewards_u128 = fall_u256 amount_rewards_u256;
+
+    ThrowZero amount_rewards_u128;
+
+    new_rewards_pool = builtin sub pool_rewards amount_rewards_u128;
+
+    e = {
+      _eventname: "ClaimedRewards";
+      initiator: _sender;
+      token: token;
+      new_rewards_pool: new_rewards_pool;
+      percent: percent_u256;
+      amount_rewards: amount_rewards_u128
+    };
+    event e;
+
+    CallTransfer _sender amount_rewards_u128 token;
+
+    rewards[token] := new_rewards_pool
+  | None =>
+    err = CodePoolMissing;
+    ThrowError err
+  end
+end
 (* user interactions *)
 
 
@@ -1092,6 +1192,11 @@ end
 transition SetNewMinLP(new_min_lp: Uint128)
   OwnerOnly;
   min_lp := new_min_lp
+end
+
+transition SetMinBlocksRewards(new_blocks: Int256)
+  OwnerOnly;
+  min_rewards_blocks := new_blocks
 end
 
 transition ReturnFunds()
