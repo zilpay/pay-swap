@@ -740,6 +740,7 @@ procedure SwapZIL(
           token_reserve
           tt;
         ReceiveRewards token_address zil_fee_u128 tokens_fee_u128;
+        CallTransferFrom exact_amount _sender _this_address token_address;
         AddFunds recipient_address amount_zil_u128
       end
     end
