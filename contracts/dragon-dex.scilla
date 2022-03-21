@@ -252,7 +252,7 @@ let check_operators =
         builtin eq a sender in
     addr_exists f operators
 
-let clac_percent =
+let calc_percent =
   fun (t: Uint256) =>
   fun (b: Uint256) =>
   fun (percent: Uint256) =>
@@ -1139,12 +1139,12 @@ transition ClaimRewards(token: ByStr20)
     sender_balance_u256 = grow_u128 sender_balance_u128;
     rewards_pool_u256 = grow_u128 pool_rewards;
 
-    percent_u256 = clac_percent
+    percent_u256 = calc_percent
       total_contributions_u256
       sender_balance_u256
       hundred256;
 
-    amount_rewards_u256 = clac_percent hundred256 rewards_pool_u256 percent_u256;
+    amount_rewards_u256 = calc_percent hundred256 rewards_pool_u256 percent_u256;
     amount_rewards_u128 = fall_u256 amount_rewards_u256;
 
     ThrowZero amount_rewards_u128;
