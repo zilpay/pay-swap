@@ -1164,6 +1164,7 @@ transition ClaimRewards(token: ByStr20)
 
     CallTransfer _sender amount_rewards_u128 token;
 
+    rewards_blocks[_sender] := current_block;
     rewards[token] := new_rewards_pool
   | None =>
     err = CodePoolMissing;
