@@ -757,7 +757,6 @@ transition AddLiquidity(
   current_block <- & BLOCKNUMBER;
 
   ThrowExpired deadline_block current_block;
-  CheckMinLP _amount;
   ThrowZeroAddress token_address;
   ThrowZero max_token_amount;
 
@@ -765,6 +764,7 @@ transition AddLiquidity(
 
   match some_pool with
   | None =>
+    CheckMinLP _amount;
     CallTransferFrom max_token_amount _sender _this_address token_address;
     accept;
     (* INIT Pool *)
