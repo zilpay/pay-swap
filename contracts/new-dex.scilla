@@ -14,6 +14,7 @@ type Error =
   | CodeTransactionExpired
   | CodeEmptyAddress
   | CodeMinLP
+  | CodeSameAddress
 
 type Denom =
   | Zil
@@ -89,6 +90,11 @@ let make_error =
       {
         _exception: "LP less then min";
         code: Int32 -9
+      }
+    | CodeSameAddress =>
+      {
+        _exception: "Input addresses are same";
+        code: Int32 -10
       }
     end
 
@@ -203,7 +209,7 @@ field balances: Map ByStr20 (Map ByStr20 Uint128) = Emp ByStr20 (Map ByStr20 Uin
 field swap_fee: Uint256 = zero256
 
 (* Min number zil for LP providers. *)
-field min_lp: Uint128 = Uint128 99000000000000
+field min_lp: Uint128 = Uint128 1
 
 
 procedure ThrowError(err : Error)
@@ -230,6 +236,16 @@ procedure ThrowZero(v: Uint128)
   | False =>
   | True =>
     err = CodeCannotBeZero;
+    ThrowError err
+  end
+end
+
+procedure ThrowIfSameAddress(address1: ByStr20, address2: ByStr20)
+  is_same = builtin eq address1 address2;
+  match is_same with
+  | False =>
+  | True =>
+    err = CodeSameAddress;
     ThrowError err
   end
 end
@@ -397,6 +413,75 @@ procedure SwapZIL(
       tt
     (* TODO: add recieve rewards *)
     (* TODO: add CallTransfer *)
+  end
+end
+
+procedure SwapTokens(
+  pool0: Pair Uint128 Uint128,
+  pool1: Pair Uint128 Uint128,
+  token0_address: ByStr20,
+  token1_address: ByStr20,
+  exact_amount: Uint128,
+  limit_amount: Uint128,
+  recipient_address: ByStr20
+)
+  direction0 = TokenToZil;
+  direction1 = ZilToToken;
+
+  exact_amount0_u256 = grow_u128 exact_amount;
+
+  match pool0 with
+  | Pair zil_reserve0 token_reserve0 =>
+    zil_reserve0_u256 = grow_u128 zil_reserve0;
+    token_reserve0_u256 = grow_u128 token_reserve0;
+
+    zil_intermediate_amount_u256 = amount_for
+      direction0
+      exact_amount0_u256
+      zil_reserve0_u256
+      token_reserve0_u256;
+    zil_intermediate_amount_u128 = fall_u256 zil_intermediate_amount_u256;
+
+    (* TODO: add fee *)
+
+    match pool1 with
+    | Pair zil_reserve1 token_reserve1 =>
+      zil_reserve1_u256 = grow_u128 zil_reserve1;
+      token_reserve1_u256 = grow_u128 token_reserve1;
+
+      calculated_amount_u256 = amount_for
+        direction1
+        zil_intermediate_amount_u256
+        zil_reserve1_u256
+        token_reserve1_u256;
+      calculated_amount_u128 = fall_u256 calculated_amount_u256;
+
+      CheckLimits calculated_amount_u128 limit_amount;
+
+      SwapOptions
+        token0_address
+        direction0
+        exact_amount
+        zil_intermediate_amount_u128
+        zil_reserve0
+        token_reserve0
+        ff;
+      SwapOptions
+        token1_address
+        direction1
+        zil_intermediate_amount_u128
+        calculated_amount_u128
+        zil_reserve1
+        token_reserve1
+        ff;
+      (* TODO: add CallTransfer *)
+      CallBack
+        token0_address
+        token1_address
+        exact_amount
+        limit_amount
+        tt
+    end
   end
 end
 (* iterations *)
@@ -585,6 +670,111 @@ transition RemoveLiquidity(
         amount: contribution_amount
       };
       event e
+    end
+  | None =>
+    err = CodePoolMissing;
+    ThrowError err
+  end
+end
+
+transition SwapExactZILForTokens(
+  token_address : ByStr20,
+  min_token_amount : Uint128,
+  deadline_block : BNum,
+  recipient_address : ByStr20
+)
+  current_block <- & BLOCKNUMBER;
+
+  ThrowExpired deadline_block current_block;
+  ThrowZero _amount;
+  ThrowZero min_token_amount;
+
+  some_pool <- pools[token_address];
+
+  match some_pool with
+  | Some pool =>
+    direction = ZilToToken;
+
+    (* TODO: add accept *)
+
+    SwapZIL
+      token_address
+      direction
+      pool
+      _amount
+      min_token_amount
+      recipient_address
+  | None =>
+    err = CodePoolMissing;
+    ThrowError err
+  end
+end
+
+transition SwapExactTokensForZIL(
+  token_address: ByStr20,
+  token_amount: Uint128,
+  min_zil_amount: Uint128,
+  deadline_block: BNum,
+  recipient_address: ByStr20
+)
+  current_block <- & BLOCKNUMBER;
+
+  ThrowExpired deadline_block current_block;
+  ThrowZero token_amount;
+  ThrowZero min_zil_amount;
+  ThrowZeroAddress recipient_address;
+
+  some_pool <- pools[token_address];
+
+  match some_pool with
+  | Some pool =>
+    direction = TokenToZil;
+
+    SwapZIL
+      token_address
+      direction
+      pool
+      token_amount
+      min_zil_amount
+      recipient_address
+  | None =>
+    err = CodePoolMissing;
+    ThrowError err
+  end
+end
+
+transition SwapExactTokensForTokens(
+  token0_address: ByStr20,
+  token1_address: ByStr20,
+  token0_amount: Uint128,
+  min_token1_amount: Uint128,
+  deadline_block: BNum,
+  recipient_address: ByStr20
+)
+  current_block <- & BLOCKNUMBER;
+
+  ThrowExpired deadline_block current_block;
+  ThrowZero token0_amount;
+  ThrowZero min_token1_amount;
+  ThrowZeroAddress recipient_address;
+  ThrowIfSameAddress token0_address token1_address;
+
+  some_pool0 <- pools[token0_address];
+  some_pool1 <- pools[token1_address];
+
+  match some_pool0 with
+  | Some pool0 =>
+    match some_pool1 with
+    | Some pool1 =>
+      (* TODO: add CallTransferFrom *)
+      SwapTokens
+        pool0 pool1
+        token0_address token1_address
+        token0_amount min_token1_amount
+        recipient_address
+    | None =>
+      err = CodePoolMissing;
+      ThrowError err
     end
   | None =>
     err = CodePoolMissing;
