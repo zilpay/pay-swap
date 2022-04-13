@@ -14,6 +14,7 @@ type Error =
   | CodeTransactionExpired
   | CodeEmptyAddress
   | CodeMinLP
+  | CodeMinBlocks
 
 type Denom =
   | Zil
@@ -38,6 +39,7 @@ let zero128 = Uint128 0
 let two128 = Uint128 2
 let one128 = Uint128 1
 let fee_demon = Uint256 10000
+let fee = Uint256 9970
 
 let tt = True
 let ff = False
@@ -98,6 +100,11 @@ let make_error =
       {
         _exception: "LP less then min";
         code: Int32 -9
+      }
+    | CodeMinBlocks =>
+      {
+        _exception: "Rewards countdown";
+        code: Int32 -10
       }
     end
 
@@ -231,6 +238,11 @@ let is_empty_pool =
     let y_empty = builtin lt y one128 in
       orb x_empty y_empty
 
+let get_fee =
+  fun (value: Uint256) =>
+  fun (fee: Uint256) =>
+    let v_f = builtin mul value fee in
+      builtin div v_f fee_demon
 
 let check_operators =
   fun (operators: List ByStr20) =>
@@ -240,6 +252,12 @@ let check_operators =
         builtin eq a sender in
     addr_exists f operators
 
+let calc_percent =
+  fun (t: Uint256) =>
+  fun (b: Uint256) =>
+  fun (percent: Uint256) =>
+    let t_b = builtin mul b percent in
+      builtin div t_b t
 
 
 contract DragonDexContract
@@ -266,14 +284,26 @@ field total_contributions: Map ByStr20 Uint128 = Emp ByStr20 Uint128
 (* token -> _sender -> started_zil_reserve *)
 field balances: Map ByStr20 (Map ByStr20 Uint128) = Emp ByStr20 (Map ByStr20 Uint128)
 
+(* team rewards in ZILs *)
+field contract_balance: Uint128 = zero128
+
 (* fee for each swap - zil_fee, token_fee *)
-field swap_fee: Uint256 = zero256
+field swap_fee: Pair Uint256 Uint256 = Pair {Uint256 Uint256} fee fee
 
 (* A callback for interact with another contract. *)
 field callback_addr: ByStr20 = zero_address
 
+(* Rewards for LP provider. token / tokens_amount *)
+field rewards: Map ByStr20 Uint128 = Emp ByStr20 Uint128
+
 (* Pool for increase price with every swap. *)
 field rewards_pool: ByStr20 = zero_address
+
+(* Rewards timer, LP proverid can claim pear some blocks. *)
+field rewards_blocks: Map ByStr20 BNum = Emp ByStr20 BNum
+
+(* min blocks for rewards claim *)
+field min_rewards_blocks: Int256 = Int256 1
 
 (* Min number zil for LP providers. *)
 field min_lp: Uint128 = Uint128 99000000000000
@@ -374,6 +404,23 @@ procedure CheckLimits(
   | True =>
   end
 end
+
+procedure CheckBlockTimer(current_block: BNum)
+  min_blocks <- min_rewards_blocks;
+  some_rewards_blocks <- rewards_blocks[_sender];
+
+  r_blocks = option_bn zerobn some_rewards_blocks;
+
+  diff = builtin bsub current_block r_blocks;
+  check = builtin lt min_blocks diff;
+
+  match check with
+  | True =>
+  | False =>
+    err = CodeMinBlocks;
+    ThrowError err
+  end
+end
 (* Checkers *)
 
 (* MSG CALL *)
@@ -412,6 +459,49 @@ procedure CallTransfer(to: ByStr20, amount: Uint128, recipient: ByStr20)
   send msgs
 end
 (* MSG CALL *)
+
+procedure ReceiveRewards(
+  token_address: ByStr20,
+  zil_rewards: Uint128,
+  tokens_rewards: Uint128
+)
+  is_zil_zero = builtin eq zil_rewards zero128;
+  is_tokens_zero = builtin eq tokens_rewards zero128;
+
+  match is_zil_zero with
+  | True =>
+  | False =>
+    addr_rewards_pool <- rewards_pool;
+    contract_rewards <- contract_balance;
+    some_pool <- pools[addr_rewards_pool];
+
+    match some_pool with
+    | None => 
+      new_contract_rewards = builtin add contract_rewards zil_rewards;
+      contract_balance := new_contract_rewards
+    | Some pool =>
+      half = builtin div zil_rewards two128;
+      new_contract_rewards = builtin add contract_rewards half;
+      contract_balance := new_contract_rewards;
+
+      match pool with
+      | Pair zil tokens =>
+        new_zil = builtin add zil half;
+        new_pool = Pair {Uint128 Uint128} new_zil tokens;
+        pools[addr_rewards_pool] := new_pool
+      end
+    end
+  end;
+
+  match is_tokens_zero with
+  | True =>
+  | False =>
+    some_lp_rewards <- rewards[token_address];
+    lp_rewards = option_uint128 zero128 some_lp_rewards;
+    new_lp_rewards = builtin add lp_rewards tokens_rewards;
+    rewards[token_address] := new_lp_rewards
+  end
+end
 
 procedure AddLPCallBack(zil: Uint128, tokens: Uint128)
   recipient <- callback_addr;
@@ -585,7 +675,7 @@ procedure SwapZIL(
   limit_amount: Uint128,
   recipient_address: ByStr20
 )
-  fee <- swap_fee;
+  fee_pari <- swap_fee;
 
   match pool with
   | Pair zil_reserve token_reserve =>
@@ -599,21 +689,61 @@ procedure SwapZIL(
       exact_amount_u256
       zil_reserve_u256
       token_reserve_u256;
+    
+    match fee_pari with
+    | Pair zil_fee tokens_fee =>
+      match direction with
+      | ZilToToken =>
+        amount_token_u256 = get_fee calculated_amount_u256 tokens_fee;
+        amount_zil_u256 = get_fee exact_amount_u256 zil_fee;
 
-    calculated_amount_u128 = fall_u256 calculated_amount_u256;
-    CheckLimits calculated_amount_u128 limit_amount exact_side;
+        tokens_fee_u256 = builtin sub calculated_amount_u256 amount_token_u256;
+        zil_fee_u256 = builtin sub exact_amount_u256 amount_zil_u256;
 
-    SwapOptions
-      token_address
-      direction
-      exact_side
-      exact_amount
-      calculated_amount_u128
-      zil_reserve
-      token_reserve
-      tt
-      (* CallTransferFrom exact_amount _sender _this_address token_address;
-      AddFunds recipient_address amount_zil_u128 *)
+        amount_token_u128 = fall_u256 amount_token_u256;
+        tokens_fee_u128 = fall_u256 tokens_fee_u256;
+        zil_fee_u128 = fall_u256 zil_fee_u256;
+
+        CheckLimits amount_token_u128 limit_amount exact_side;
+
+        SwapOptions
+          token_address
+          direction
+          exact_side
+          exact_amount
+          amount_token_u128
+          zil_reserve
+          token_reserve
+          tt;
+        ReceiveRewards token_address zil_fee_u128 tokens_fee_u128;
+        CallTransfer recipient_address amount_token_u128 token_address
+      | TokenToZil =>
+        amount_zil_u256 = get_fee calculated_amount_u256 zil_fee;
+        amount_token_u256 = get_fee exact_amount_u256 tokens_fee;
+
+        tokens_fee_u256 = builtin sub exact_amount_u256 amount_token_u256;
+        zil_fee_u256 = builtin sub calculated_amount_u256 amount_zil_u256;
+
+        amount_zil_u128 = fall_u256 amount_zil_u256;
+        tokens_fee_u128 = fall_u256 tokens_fee_u256;
+        zil_fee_u128 = fall_u256 zil_fee_u256;
+
+        CheckLimits amount_zil_u128 limit_amount exact_side;
+
+        SwapOptions
+          token_address
+          direction
+          exact_side
+          exact_amount
+          amount_zil_u128
+          zil_reserve
+          token_reserve
+          tt;
+        ReceiveRewards token_address zil_fee_u128 tokens_fee_u128;
+        CallTransferFrom exact_amount _sender _this_address token_address;
+        AddFunds recipient_address amount_zil_u128
+      end
+    end
   end
 end
 
@@ -711,7 +841,8 @@ transition AddLiquidity(
 
       emitMintPool token_address _sender new_contribution_u128
     end
-  end
+  end;
+  rewards_blocks[_sender] := current_block
 end
 
 transition RemoveLiquidity(
@@ -878,7 +1009,7 @@ transition SwapExactTokensForZIL(
   end
 end
 
-(* transition SwapExactTokensForTokens(
+transition SwapExactTokensForTokens(
   token0_address: ByStr20,
   token1_address: ByStr20,
   token0_amount: Uint128,
@@ -904,76 +1035,79 @@ end
 
       match pool0 with
       | Pair zil_reserve0 token_reserve0 =>
-        fee <- swap_fee;
+        fee_pari <- swap_fee;
 
         CallTransferFrom token0_amount _sender _this_address token0_address;
 
-        direction0 = TokenToZil;
-        exact_side0 = ExactInput;
-        zil_reserve0_u256 = grow_u128 zil_reserve0;
-        token_reserve0_u256 = grow_u128 token_reserve0;
+        match fee_pari with
+        | Pair zil_fee tokens_fee =>
+          direction0 = TokenToZil;
+          exact_side0 = ExactInput;
+          zil_reserve0_u256 = grow_u128 zil_reserve0;
+          token_reserve0_u256 = grow_u128 token_reserve0;
 
-        zil_intermediate_amount_u256 = amount_for
-          direction0
-          exact_side0
-          exact_amount0_u256
-          zil_reserve0_u256
-          token_reserve0_u256;
-        amount_token_u256 = get_fee exact_amount0_u256 tokens_fee;
-        tokens_fee_u256 = builtin sub exact_amount0_u256 amount_token_u256;
-
-        tokens_fee_u128 = fall_u256 tokens_fee_u256;
-
-        ReceiveRewards token0_address zero128 tokens_fee_u128;
-
-        match pool1 with
-        | Pair zil_reserve1 token_reserve1 =>
-          direction1 = ZilToToken;
-          exact_side1 = ExactInput;
-          zil_reserve1_u256 = grow_u128 zil_reserve1;
-          token_reserve1_u256 = grow_u128 token_reserve1;
-
-          calculated_amount_u256 = amount_for
-            direction1
-            exact_side1
-            zil_intermediate_amount_u256
-            zil_reserve1_u256
-            token_reserve1_u256;
-
-          amount_token0_u256 = get_fee calculated_amount_u256 tokens_fee;
-          tokens_fee0_u256 = builtin sub calculated_amount_u256 amount_token0_u256;
-          amount_token0_u128 = fall_u256 amount_token0_u256;
-          tokens_fee0_u128 = fall_u256 tokens_fee0_u256;
-  
-          CheckLimits amount_token0_u128 min_token1_amount exact_side1;
-
-          zil_intermediate_amount_u128 = fall_u256 zil_intermediate_amount_u256;
-          SwapOptions
-            token0_address
+          zil_intermediate_amount_u256 = amount_for
             direction0
             exact_side0
-            token0_amount
-            zil_intermediate_amount_u128
-            zil_reserve0
-            token_reserve0
-            ff;
-          SwapOptions
-            token1_address
-            direction1
-            exact_side1
-            zil_intermediate_amount_u128
-            amount_token0_u128
-            zil_reserve1
-            token_reserve1
-            ff;
-        ReceiveRewards token1_address zero128 tokens_fee_u128;
-          CallTransfer recipient_address amount_token0_u128 token1_address;
-          CallBack
-            token0_address
-            token1_address
-            token0_amount
-            amount_token0_u128
-            tt
+            exact_amount0_u256
+            zil_reserve0_u256
+            token_reserve0_u256;
+          amount_token_u256 = get_fee exact_amount0_u256 tokens_fee;
+          tokens_fee_u256 = builtin sub exact_amount0_u256 amount_token_u256;
+
+          tokens_fee_u128 = fall_u256 tokens_fee_u256;
+
+          ReceiveRewards token0_address zero128 tokens_fee_u128;
+
+          match pool1 with
+          | Pair zil_reserve1 token_reserve1 =>
+            direction1 = ZilToToken;
+            exact_side1 = ExactInput;
+            zil_reserve1_u256 = grow_u128 zil_reserve1;
+            token_reserve1_u256 = grow_u128 token_reserve1;
+
+            calculated_amount_u256 = amount_for
+              direction1
+              exact_side1
+              zil_intermediate_amount_u256
+              zil_reserve1_u256
+              token_reserve1_u256;
+
+            amount_token0_u256 = get_fee calculated_amount_u256 tokens_fee;
+            tokens_fee0_u256 = builtin sub calculated_amount_u256 amount_token0_u256;
+            amount_token0_u128 = fall_u256 amount_token0_u256;
+            tokens_fee0_u128 = fall_u256 tokens_fee0_u256;
+    
+            CheckLimits amount_token0_u128 min_token1_amount exact_side1;
+
+            zil_intermediate_amount_u128 = fall_u256 zil_intermediate_amount_u256;
+            SwapOptions
+              token0_address
+              direction0
+              exact_side0
+              token0_amount
+              zil_intermediate_amount_u128
+              zil_reserve0
+              token_reserve0
+              ff;
+            SwapOptions
+              token1_address
+              direction1
+              exact_side1
+              zil_intermediate_amount_u128
+              amount_token0_u128
+              zil_reserve1
+              token_reserve1
+              ff;
+            ReceiveRewards token1_address zero128 tokens_fee_u128;
+            CallTransfer recipient_address amount_token0_u128 token1_address;
+            CallBack
+              token0_address
+              token1_address
+              token0_amount
+              amount_token0_u128
+              tt
+          end
         end
       end
     | None =>
@@ -984,13 +1118,66 @@ end
     err = CodePoolMissing;
     ThrowError err
   end
-end *)
+end
+
+transition ClaimRewards(token: ByStr20)
+  current_block <- & BLOCKNUMBER;
+  CheckBlockTimer current_block;
+
+  some_rewards <- rewards[token];
+
+  match some_rewards with
+  | Some pool_rewards =>
+    ThrowZero pool_rewards;
+
+    some_total_contributions <- total_contributions[token];
+    some_sender_balance <- balances[token][_sender];
+
+    total_contributions_u128 = option_uint128 zero128 some_total_contributions;
+    sender_balance_u128 = option_uint128 zero128 some_sender_balance;
+
+    total_contributions_u256 = grow_u128 total_contributions_u128;
+    sender_balance_u256 = grow_u128 sender_balance_u128;
+    rewards_pool_u256 = grow_u128 pool_rewards;
+
+    percent_u256 = calc_percent
+      total_contributions_u256
+      sender_balance_u256
+      hundred256;
+
+    amount_rewards_u256 = calc_percent hundred256 rewards_pool_u256 percent_u256;
+    amount_rewards_u128 = fall_u256 amount_rewards_u256;
+
+    ThrowZero amount_rewards_u128;
+
+    new_rewards_pool = builtin sub pool_rewards amount_rewards_u128;
+
+    e = {
+      _eventname: "ClaimedRewards";
+      initiator: _sender;
+      token: token;
+      new_rewards_pool: new_rewards_pool;
+      percent: percent_u256;
+      amount_rewards: amount_rewards_u128
+    };
+    event e;
+
+    CallTransfer _sender amount_rewards_u128 token;
+
+    rewards_blocks[_sender] := current_block;
+    rewards[token] := new_rewards_pool
+  | None =>
+    err = CodePoolMissing;
+    ThrowError err
+  end
+end
 (* user interactions *)
 
 
 (* admin interactions *)
-transition SetFee(new_fee: Uint256)
+transition SetFee(zil_fee: Uint256, tokens_fee: Uint256)
   OwnerOnly;
+  new_fee = Pair {Uint256 Uint256} zil_fee tokens_fee;
   swap_fee := new_fee
 end
 
@@ -1007,6 +1194,20 @@ end
 transition SetNewMinLP(new_min_lp: Uint128)
   OwnerOnly;
   min_lp := new_min_lp
+end
+
+transition SetMinBlocksRewards(new_blocks: Int256)
+  OwnerOnly;
+  min_rewards_blocks := new_blocks
+end
+
+transition ReturnFunds()
+  OwnerOnly;
+
+  bal <- contract_balance;
+  wallet <- owner;
+
+  AddFunds wallet bal
 end
 (* admin interactions *)
 
