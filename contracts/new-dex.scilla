@@ -30,8 +30,9 @@ let zero_address = 0x0000000000000000000000000000000000000000
 
 let zero128 = Uint128 0
 let zero256 = Uint256 0
+let zero32 = Uint32 0
 
-
+let one32 = Uint32 1
 let one128 = Uint128 1
 let two128 = Uint128 2
 let two256 = Uint256 2
@@ -114,7 +115,8 @@ let option_value =
 
 
 let option_uint128 = @option_value Uint128
-
+let addr_exists = @list_exists ByStr20
+let list_length_addr = @list_length ByStr20
 
 let grow_u128: Uint128 -> Uint256 =
   fun (v : Uint128) =>
@@ -194,10 +196,30 @@ let is_empty_pool =
     let y_empty = builtin lt y one128 in
       orb x_empty y_empty
 
+let check_operators =
+  fun (operators: List ByStr20) =>
+  fun (sender: ByStr20) =>
+    let f =
+      fun (a: ByStr20) =>
+        builtin eq a sender in
+    addr_exists f operators
+
 
 contract DragonDexContract
-()
+(
+  init_owner: ByStr20,
+  operators: List ByStr20
+)
 
+
+(* Contract owner *)
+field owner: ByStr20 = init_owner
+
+(* operators approvals for onwer transfer *)
+field transfer_owner_approvals: Map ByStr20 (Map ByStr20 Bool) = Emp ByStr20 (Map ByStr20 Bool)
+
+(* Numbers of approvals for transfer owner. *)
+field number_approvals: Uint32 = zero32
 
 (* POOL token -> Pari{zil_reserve, token_reserve} *)
 field pools: Map ByStr20 (Pair Uint128 Uint128) = Emp ByStr20 (Pair Uint128 Uint128)
@@ -216,6 +238,9 @@ field min_lp: Uint128 = Uint128 1
 
 (* Pool for increase price with every swap. *)
 field rewards_pool: ByStr20 = zero_address
+
+(* A callback for interact with another contract. *)
+field callback_addr: ByStr20 = zero_address
 
 
 procedure ThrowError(err : Error)
@@ -304,15 +329,74 @@ procedure CheckLimits(
   | True =>
   end
 end
+
+procedure OwnerOnly()
+  contract_owner <- owner;
+  is_owner = builtin eq _sender contract_owner;
+  match is_owner with
+  | True =>
+  | False =>
+    err = CodeNotContractOwner;
+    ThrowError err
+  end
+end
+
+procedure OperatorOnly()
+  is_operator = check_operators operators _sender;
+  match is_operator with
+  | True =>
+  | False =>
+    err = CodeNotOperator;
+    ThrowError err
+  end
+end
 (* Checkers *)
 
-(* iterations *)
-procedure CallBack(
+(* MSG CALL *)
+procedure AddFunds(recipient: ByStr20, amount: Uint128)
+  msg = {
+    _tag: "AddFunds";
+    _recipient: recipient;
+    _amount: amount
+  };
+  msgs = one_msg msg;
+  send msgs
+end
+
+procedure CallTransferFrom(amount: Uint128, from: ByStr20, to: ByStr20, recipient: ByStr20)
+  call_transfer_zlp = {
+    _tag: "TransferFrom";
+    _recipient: recipient;
+    _amount: zero128;
+    from: from;
+    to: to;
+    amount: amount
+  };
+  msgs = one_msg call_transfer_zlp;
+  send msgs
+end
+
+procedure CallTransfer(to: ByStr20, amount: Uint128, recipient: ByStr20)
+  msg_transfer = {
+    _tag: "Transfer";
+    _recipient: recipient;
+    _amount: zero128;
+    to: to;
+    amount: amount
+  };
+  msgs = one_msg msg_transfer;
+  send msgs
+end
+
+procedure CallBackSwap(
   input_token: ByStr20,
   output_token: ByStr20,
   input_amount: Uint128,
   output_amount: Uint128
 )
+  recipient <- callback_addr;
+  is_empty = builtin eq recipient zero_address;
+
   e = {
     _eventname: "Swapped";
     initiator: _sender;
@@ -321,9 +405,69 @@ procedure CallBack(
     input_amount: input_amount;
     output_amount: output_amount
   };
-  event e
+  event e;
+
+  match is_empty with
+  | False =>
+    call_callback = {
+      _tag: "CallBackSwap";
+      _recipient: recipient;
+      _amount: zero128;
+      initiator: _sender;
+      input_token: input_token;
+      output_token: output_token;
+      input_amount: input_amount;
+      output_amount: output_amount
+    };
+    msg = one_msg call_callback;
+    send msg
+  | True =>
+  end
 end
 
+procedure CallBackRemoveLiquidity(zil: Uint128, tokens: Uint128)
+  recipient <- callback_addr;
+  is_empty = builtin eq recipient zero_address;
+
+  match is_empty with
+  | False =>
+    call_callback = {
+      _tag: "CallBackRemoveLiquidity";
+      _recipient: recipient;
+      _amount: zero128;
+      initiator: _sender;
+      zil: zil;
+      tokens: tokens
+    };
+    msg = one_msg call_callback;
+    send msg
+  | True =>
+  end
+end
+
+procedure CallBackAddLiquidity(zil: Uint128, tokens: Uint128)
+  recipient <- callback_addr;
+  is_empty = builtin eq recipient zero_address;
+
+  match is_empty with
+  | False =>
+    call_callback = {
+      _tag: "CallBackAddLiquidity";
+      _recipient: recipient;
+      _amount: zero128;
+      initiator: _sender;
+      zil: zil;
+      tokens: tokens
+    };
+    msg = one_msg call_callback;
+    send msg
+  | True =>
+  end
+end
+
+(* MSG CALL *)
+
+(* iterations *)
 procedure ReceiveRewards(zil_rewards: Uint128)
   is_zero = builtin eq zil_rewards zero128;
 
@@ -380,8 +524,6 @@ procedure SwapOptions(
 )
   fee <- swap_fee;
 
-  exact_amount_u256 = grow_u128 exact_amount;
-
   match direction with
   | ZilToToken =>
     some_pool <- pools[output_token];
@@ -390,6 +532,7 @@ procedure SwapOptions(
     | Some pool =>
       match pool with
       | Pair zil_reserve token_reserve =>
+        exact_amount_u256 = grow_u128 exact_amount;
         exact_amount_after_fee = after_fee exact_amount_u256 fee;
         rewards_amount = builtin sub exact_amount_u256 exact_amount_after_fee;
 
@@ -403,6 +546,7 @@ procedure SwapOptions(
         calculated_amount_u128 = fall_u256 calculated_amount_u256;
 
         CheckLimits calculated_amount_u128 limit_amount;
+        accept;
         ReceiveRewards rewards_amount;
 
         MakeSwap
@@ -412,11 +556,12 @@ procedure SwapOptions(
           zil_denom
           zil_reserve
           token_reserve;
-        CallBack
+        CallBackSwap
           input_token
           output_token
           exact_amount_u128
-          calculated_amount_u128
+          calculated_amount_u128;
+        CallTransfer recipient_address calculated_amount_u128 output_token
       end
     | None =>
       err = CodePoolMissing;
@@ -448,11 +593,13 @@ procedure SwapOptions(
           zrc_denom
           zil_reserve
           token_reserve;
-      CallBack
+      CallBackSwap
         input_token
         output_token
         exact_amount
-        calculated_amount_u128
+        calculated_amount_u128;
+      CallTransferFrom exact_amount _sender _this_address input_token;
+      AddFunds recipient_address calculated_amount_u128
       end
     | None =>
       err = CodePoolMissing;
@@ -470,6 +617,8 @@ procedure SwapOptions(
         | Pair input_zil_reserve input_token_reserve =>
           match output_pool with
           | Pair output_zil_reserve output_token_reserve =>
+            CallTransferFrom exact_amount _sender _this_address input_token;
+
             (* Swap input tokens to ZIL. *)
             zil_intermediate_amount_u256 = output_for
               exact_amount
@@ -504,11 +653,12 @@ procedure SwapOptions(
               zil_denom
               output_zil_reserve
               output_token_reserve;
-            CallBack
+            CallBackSwap
               input_token
               output_token
               exact_amount
-              calculated_amount_u128
+              calculated_amount_u128;
+            CallTransfer recipient_address calculated_amount_u128 output_token
           end
         end
       | None =>
@@ -544,16 +694,17 @@ transition AddLiquidity(
   match some_pool with
   | None =>
     CheckMinLP _amount;
-    (* TODO: add transfer from *)
-    (* TODO: add accept *)
     (* INIT Pool *)
     new_pool = Pair {Uint128 Uint128} _amount max_token_amount;
+
+    CallTransferFrom max_token_amount _sender _this_address token_address;
+    accept;
 
     pools[token_address] := new_pool;
     balances[token_address][_sender] := _amount;
     total_contributions[token_address] := _amount;
 
-    (* TODO: add callback *)
+    CallBackAddLiquidity _amount max_token_amount;
 
     pool_event = {
       _eventname: "PoolCreated";
@@ -595,15 +746,15 @@ transition AddLiquidity(
         ThrowError err
       end;
 
-      (* TODO: add TransferFrom *)
-      (* TODO: add accept ZILs *)
+      CallTransferFrom result_u128 _sender _this_address token_address;
+      accept;
 
       new_x = builtin add zil_reserve _amount;
       new_y = builtin add token_reserve result_u128;
       new_pool = Pair {Uint128 Uint128} new_x new_y;
       pools[token_address] := new_pool;
 
-      (* TODO: add callback *)
+      CallBackAddLiquidity new_x new_y;
 
       existing_balance <- balances[token_address][_sender];
 
@@ -698,9 +849,10 @@ transition RemoveLiquidity(
         total_contributions[token_address] := new_total_contribution
       end;
 
-      (* TODO: CallTransfer _sender token_amount_u128 token_address; *)
-      (* TODO: AddFunds _sender zil_amount_u128; *)
-      (* TODO: RemoveLPCallBack zil_amount_u128 token_amount_u128; *)
+
+      CallTransfer _sender token_amount_u128 token_address;
+      AddFunds _sender zil_amount_u128;
+      CallBackRemoveLiquidity zil_amount_u128 token_amount_u128;
 
       e = {
         _eventname: "Burnt";
@@ -796,12 +948,58 @@ end
 
 (* admin interactions *)
 transition SetRewardsPoolAddress(addr: ByStr20)
-  (* OwnerOnly; *)
+  OwnerOnly;
   rewards_pool := addr
 end
 
 transition SetFee(new_fee: Uint256)
-  (* OwnerOnly; *)
+  OwnerOnly;
   swap_fee := new_fee
 end
 (* admin interactions *)
+
+
+(* operator interactions *)
+transition TransferOwnership(new_owner: ByStr20)
+  OperatorOnly;
+
+  already_voted <- exists transfer_owner_approvals[new_owner][_sender];
+  approvals <- number_approvals;
+
+  match already_voted with
+  | True =>
+    new_approvals = builtin sub approvals one32;
+    number_approvals := new_approvals;
+    delete transfer_owner_approvals[new_owner][_sender]
+  | False =>
+    new_approvals = builtin add approvals one32;
+    number_of_operators = list_length_addr operators;
+    is_enough = builtin eq number_of_operators new_approvals;
+
+    match is_enough with
+    | True =>
+      delete transfer_owner_approvals[new_owner];
+      number_approvals := zero32;
+      owner := new_owner
+    | False =>
+      number_approvals := new_approvals;
+      transfer_owner_approvals[new_owner][_sender] := tt
+    end
+  end
+end
+(* operator interactions *)
+
+
+(* callbacks *)
+transition RecipientAcceptTransfer(sender: ByStr20, recipient: ByStr20, amount: Uint128)
+end
+
+transition RecipientAcceptTransferFrom(initiator: ByStr20, sender: ByStr20, recipient: ByStr20, amount: Uint128)
+end
+
+transition TransferFromSuccessCallBack(initiator: ByStr20, sender: ByStr20, recipient: ByStr20, amount: Uint128)
+end
+
+transition TransferSuccessCallBack(sender: ByStr20, recipient: ByStr20, amount: Uint128)
+end
+(* callbacks *)
