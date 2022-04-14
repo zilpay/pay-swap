@@ -34,6 +34,7 @@ let zero256 = Uint256 0
 
 let one128 = Uint128 1
 let two128 = Uint128 2
+let two256 = Uint256 2
 let fee_demon = Uint256 10000
 
 let tt = True
@@ -337,8 +338,7 @@ procedure ReceiveRewards(zil_rewards: Uint128)
     | Some pool =>
       match pool with
       | Pair zil tokens =>
-        half = builtin div zil_rewards two128;
-        new_zil = builtin add zil half;
+        new_zil = builtin add zil zil_rewards;
 
         e = {
           _eventname: "ZILRewards";
@@ -388,21 +388,26 @@ procedure SwapOptions(
       | Pair zil_reserve token_reserve =>
         fee <- swap_fee;
 
+        exact_amount_u256 = grow_u128 exact_amount;
+        half_fee = builtin div fee two256;
+        exact_amount_after_fee = after_fee exact_amount_u256 half_fee;
+        rewards_amount = builtin sub exact_amount_u256 exact_amount_after_fee;
+
+        rewards_amount = fall_u256 rewards_amount;
+        exact_amount_u128 = fall_u256 exact_amount_after_fee;
+
         calculated_amount_u256 = output_for
-          exact_amount
+          exact_amount_u128
           zil_reserve
           token_reserve;
-        calculated_after_fee_amount_u256 = after_fee calculated_amount_u256 fee;
-        rewards_amount = builtin sub calculated_amount_u256 calculated_after_fee_amount_u256;
-        calculated_amount_u128 = fall_u256 calculated_after_fee_amount_u256;
-        rewards_amount = fall_u256 rewards_amount;
+        calculated_amount_u128 = fall_u256 calculated_amount_u256;
 
         CheckLimits calculated_amount_u128 limit_amount;
         ReceiveRewards rewards_amount;
 
         MakeSwap
           output_token
-          exact_amount
+          exact_amount_u128
           calculated_amount_u128
           zil_denom
           zil_reserve
@@ -410,7 +415,7 @@ procedure SwapOptions(
         CallBack
           input_token
           output_token
-          exact_amount
+          exact_amount_u128
           calculated_amount_u128
       end
     | None =>
