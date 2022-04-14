@@ -14,6 +14,8 @@ type Error =
   | CodeTransactionExpired
   | CodeEmptyAddress
   | CodeMinLP
+  | CodeSameAddress
+  | CodePausedContract
 
 type Denom =
   | Zil
@@ -22,29 +24,26 @@ type Denom =
 type SwapDirection =
   | ZilToToken (* make swap ZIL to token type *)
   | TokenToZil (* make swap token to ZIL type *)
-
-type ExactSide =
-  | ExactInput
-  | ExactOutput
+  | TokensToTokens (* make swap token to tokens type *)
 
 
 let zero_address = 0x0000000000000000000000000000000000000000
-let zero32 = Uint32 0
-let zerobn = BNum 0
-let one32 = Uint32 1
-let zero256 = Uint256 0
-let hundred256 = Uint256 100000000000
+
 let zero128 = Uint128 0
-let two128 = Uint128 2
+let zero256 = Uint256 0
+let zero32 = Uint32 0
+
+let one32 = Uint32 1
 let one128 = Uint128 1
+let two128 = Uint128 2
+let two256 = Uint256 2
 let fee_demon = Uint256 10000
 
 let tt = True
 let ff = False
 
-let zil = Zil
-let zrc = Token
-
+let zil_denom = Zil
+let zrc_denom = Token
 
 let one_msg = 
   fun (msg : Message) => 
@@ -99,6 +98,16 @@ let make_error =
         _exception: "LP less then min";
         code: Int32 -9
       }
+    | CodeSameAddress =>
+      {
+        _exception: "Input addresses are same";
+        code: Int32 -10
+      }
+    | CodePausedContract =>
+      {
+        _exception: "Contract was stoped";
+        code: Int32 -11
+      }
     end
 
 let option_value =
@@ -110,11 +119,10 @@ let option_value =
     | None => default
     end
 
+
 let option_uint128 = @option_value Uint128
-let option_bn = @option_value BNum
 let addr_exists = @list_exists ByStr20
 let list_length_addr = @list_length ByStr20
-
 
 let grow_u128: Uint128 -> Uint256 =
   fun (v : Uint128) =>
@@ -134,69 +142,25 @@ let fall_u256: Uint256 -> Uint128 =
 
 (* computes the amount of the fraction x / d that is in y *)
 let fraction: Uint256 -> Uint256 -> Uint256 -> Uint256 =
-  fun (d: Uint256) =>
-  fun (x: Uint256) =>
-  fun (y: Uint256) =>
-    let d_times_y = builtin mul d y in
-      builtin div d_times_y x
+fun (d: Uint256) =>
+fun (x: Uint256) =>
+fun (y: Uint256) =>
+  let d_times_y = builtin mul d y in
+    builtin div d_times_y x
 
 (* computes the output that should be taken from the output reserve
-   when the given input amount is added to the input reserve *)
-let output_for: Uint256 -> Uint256 -> Uint256 -> Uint256 =
-  fun (input_amount: Uint256) =>
-  fun (input_reserve: Uint256) =>
-  fun (output_reserve: Uint256) =>
-    let numerator = builtin mul input_amount output_reserve in
-    let denominator = builtin add input_reserve input_amount in
+  when the given input amount is added to the input reserve *)
+let output_for: Uint128 -> Uint128 -> Uint128 -> Uint256 =
+  fun (input_amount: Uint128) =>
+  fun (input_reserve: Uint128) =>
+  fun (output_reserve: Uint128) =>
+    let exact_amount_u256 = grow_u128 input_amount in
+    let input_reserve_u256 = grow_u128 input_reserve in
+    let output_reserve_u256 = grow_u128 output_reserve in
+    let numerator = builtin mul exact_amount_u256 output_reserve_u256 in
+    let denominator = builtin add input_reserve_u256 exact_amount_u256 in
       builtin div numerator denominator
 
-(* computes the input that should be given to the input reserve
-   when the given output amount is removed from the output reserve *)
-let input_for: Uint256 -> Uint256 -> Uint256 -> Uint256 =
-   fun (output_amount: Uint256) =>
-   fun (input_reserve: Uint256) =>
-   fun (output_reserve: Uint256) =>
-     let numerator = builtin mul input_reserve output_amount in
-     let denominator = builtin sub output_reserve output_amount in
-      builtin div numerator denominator
-
-let calc =
-  fun (exact: ExactSide) =>
-    match exact with
-    | ExactInput => output_for
-    | ExactOutput => input_for
-    end
-
-(* computes the corresponding input or output amount for
-  the given exact output or input amount, pool, and direction *)
-let amount_for: SwapDirection -> ExactSide -> Uint256 -> Uint256 -> Uint256 -> Uint256 =
-  fun (direction: SwapDirection) =>
-  fun (exact_side: ExactSide) =>
-  fun (exact_amount: Uint256) =>
-  fun (zil_reserve: Uint256) =>
-  fun (token_reserve: Uint256) =>
-    match direction with
-    | ZilToToken => calc exact_side exact_amount zil_reserve token_reserve
-    | TokenToZil => calc exact_side exact_amount token_reserve zil_reserve
-    end
-
-(* checks whether the result amount is within the user provided
-  limit amount, which is dependent on whether the output or input
-  result was the one being computed *)
-let within_limits: Uint128 -> Uint128 -> ExactSide -> Bool =
-  fun (result_amount: Uint128) =>
-  fun (limit_amount: Uint128) =>
-  fun (exact_side: ExactSide) =>
-    match exact_side with
-    | ExactInput =>
-      (* we are given an exact input and are computing the output,
-        which should be greater or equal to the limit *)
-      uint128_ge result_amount limit_amount
-    | ExactOutput =>
-      (* we are given an exact output and are computing the input,
-        which should be lower or equal to the limit *)
-      uint128_ge limit_amount result_amount
-    end
 
 let check_within_limits =
   fun (amount: Uint128) =>
@@ -206,6 +170,7 @@ let check_within_limits =
     let token_lte_max = uint128_le amount max_token_amount in
     let contribution_gte_max = uint128_ge new_contribution min_contribution_amount in
       andb token_lte_max contribution_gte_max
+
 
 let pool_from_denom =
   fun (denom: Denom) =>
@@ -224,13 +189,18 @@ let pool_from_denom =
         Pair {Uint128 Uint128} new_x new_y
     end
 
+let after_fee =
+  fun (value: Uint256) =>
+  fun (fee: Uint256) =>
+    let v_f = builtin mul value fee in
+      builtin div v_f fee_demon
+
 let is_empty_pool =
   fun (x: Uint128) =>
   fun (y: Uint128) =>
     let x_empty = builtin lt x one128 in
     let y_empty = builtin lt y one128 in
       orb x_empty y_empty
-
 
 let check_operators =
   fun (operators: List ByStr20) =>
@@ -241,12 +211,12 @@ let check_operators =
     addr_exists f operators
 
 
-
 contract DragonDexContract
 (
   init_owner: ByStr20,
   operators: List ByStr20
 )
+
 
 (* Contract owner *)
 field owner: ByStr20 = init_owner
@@ -267,16 +237,19 @@ field total_contributions: Map ByStr20 Uint128 = Emp ByStr20 Uint128
 field balances: Map ByStr20 (Map ByStr20 Uint128) = Emp ByStr20 (Map ByStr20 Uint128)
 
 (* fee for each swap - zil_fee, token_fee *)
-field swap_fee: Uint256 = zero256
+field swap_fee: Uint256 = fee_demon
 
-(* A callback for interact with another contract. *)
-field callback_addr: ByStr20 = zero_address
+(* Min number zil for LP providers. *)
+field min_lp: Uint128 = Uint128 1
 
 (* Pool for increase price with every swap. *)
 field rewards_pool: ByStr20 = zero_address
 
-(* Min number zil for LP providers. *)
-field min_lp: Uint128 = Uint128 99000000000000
+(* A callback for interact with another contract. *)
+field callback_addr: ByStr20 = zero_address
+
+(* Pause for contract *)
+field pause: Uint32 = zero32
 
 
 procedure ThrowError(err : Error)
@@ -294,6 +267,7 @@ procedure emitMintPool(token_address: ByStr20, address: ByStr20, amount: Uint128
   };
   event e
 end
+
 (* EVENTS *)
 
 (* Checkers *)
@@ -307,23 +281,12 @@ procedure ThrowZero(v: Uint128)
   end
 end
 
-procedure OwnerOnly()
-  contract_owner <- owner;
-  is_owner = builtin eq _sender contract_owner;
-  match is_owner with
-  | True =>
+procedure ThrowIfSameAddress(address1: ByStr20, address2: ByStr20)
+  is_same = builtin eq address1 address2;
+  match is_same with
   | False =>
-    err = CodeNotContractOwner;
-    ThrowError err
-  end
-end
-
-procedure OperatorOnly()
-  is_operator = check_operators operators _sender;
-  match is_operator with
   | True =>
-  | False =>
-    err = CodeNotOperator;
+    err = CodeSameAddress;
     ThrowError err
   end
 end
@@ -362,16 +325,49 @@ end
 
 procedure CheckLimits(
   amount: Uint128,
-  limit: Uint128,
-  exact_side: ExactSide
+  limit: Uint128
 )
-  is_within_limits = within_limits amount limit exact_side;
+  (* we are given an exact input and are computing the output,
+    which should be greater or equal to the limit *)
+  is_within_limits = uint128_ge amount limit;
 
   match is_within_limits with
   | False =>
     err = CodeRatesCannotBeFulfilled;
     ThrowError err
   | True =>
+  end
+end
+
+procedure OwnerOnly()
+  contract_owner <- owner;
+  is_owner = builtin eq _sender contract_owner;
+  match is_owner with
+  | True =>
+  | False =>
+    err = CodeNotContractOwner;
+    ThrowError err
+  end
+end
+
+procedure OnlyUnPause()
+  curent_pause <- pause;
+  is_eq = builtin eq zero32 curent_pause;
+  match is_eq with
+  | True =>
+  | False =>
+    err = CodePausedContract;
+    ThrowError err
+  end
+end
+
+procedure OperatorOnly()
+  is_operator = check_operators operators _sender;
+  match is_operator with
+  | True =>
+  | False =>
+    err = CodeNotOperator;
+    ThrowError err
   end
 end
 (* Checkers *)
@@ -411,78 +407,113 @@ procedure CallTransfer(to: ByStr20, amount: Uint128, recipient: ByStr20)
   msgs = one_msg msg_transfer;
   send msgs
 end
+
+procedure CallBackSwap(
+  input_token: ByStr20,
+  output_token: ByStr20,
+  input_amount: Uint128,
+  output_amount: Uint128
+)
+  recipient <- callback_addr;
+  is_empty = builtin eq recipient zero_address;
+
+  e = {
+    _eventname: "Swapped";
+    initiator: _sender;
+    input_token: input_token;
+    output_token: output_token;
+    input_amount: input_amount;
+    output_amount: output_amount
+  };
+  event e;
+
+  match is_empty with
+  | False =>
+    call_callback = {
+      _tag: "CallBackSwap";
+      _recipient: recipient;
+      _amount: zero128;
+      initiator: _sender;
+      input_token: input_token;
+      output_token: output_token;
+      input_amount: input_amount;
+      output_amount: output_amount
+    };
+    msg = one_msg call_callback;
+    send msg
+  | True =>
+  end
+end
+
+procedure CallBackRemoveLiquidity(zil: Uint128, tokens: Uint128)
+  recipient <- callback_addr;
+  is_empty = builtin eq recipient zero_address;
+
+  match is_empty with
+  | False =>
+    call_callback = {
+      _tag: "CallBackRemoveLiquidity";
+      _recipient: recipient;
+      _amount: zero128;
+      initiator: _sender;
+      zil: zil;
+      tokens: tokens
+    };
+    msg = one_msg call_callback;
+    send msg
+  | True =>
+  end
+end
+
+procedure CallBackAddLiquidity(zil: Uint128, tokens: Uint128)
+  recipient <- callback_addr;
+  is_empty = builtin eq recipient zero_address;
+
+  match is_empty with
+  | False =>
+    call_callback = {
+      _tag: "CallBackAddLiquidity";
+      _recipient: recipient;
+      _amount: zero128;
+      initiator: _sender;
+      zil: zil;
+      tokens: tokens
+    };
+    msg = one_msg call_callback;
+    send msg
+  | True =>
+  end
+end
+
 (* MSG CALL *)
 
-procedure AddLPCallBack(zil: Uint128, tokens: Uint128)
-  recipient <- callback_addr;
-  is_empty = builtin eq recipient zero_address;
+(* iterations *)
+procedure ReceiveRewards(zil_rewards: Uint128)
+  is_zero = builtin eq zil_rewards zero128;
 
-  match is_empty with
+  match is_zero with
+  | True =>
   | False =>
-    call_callback = {
-      _tag: "AddLPCallBack";
-      _recipient: recipient;
-      _amount: zero128;
-      initiator: _sender;
-      zil: zil;
-      tokens: tokens
-    };
-    msg = one_msg call_callback;
-    send msg
-  | True =>
-  end
-end
+    addr_rewards_pool <- rewards_pool;
+    some_pool <- pools[addr_rewards_pool];
 
-procedure RemoveLPCallBack(zil: Uint128, tokens: Uint128)
-  recipient <- callback_addr;
-  is_empty = builtin eq recipient zero_address;
+    match some_pool with
+    | None =>
+    | Some pool =>
+      match pool with
+      | Pair zil tokens =>
+        new_zil = builtin add zil zil_rewards;
 
-  match is_empty with
-  | False =>
-    call_callback = {
-      _tag: "RemoveLPCallBack";
-      _recipient: recipient;
-      _amount: zero128;
-      initiator: _sender;
-      zil: zil;
-      tokens: tokens
-    };
-    msg = one_msg call_callback;
-    send msg
-  | True =>
-  end
-end
+        e = {
+          _eventname: "ZILRewards";
+          zil_rewards: zil_rewards
+        };
+        event e;
 
-procedure CallBack(
-  input_token: ByStr20,
-  output_output: ByStr20,
-  input_amount: Uint128,
-  output_amount: Uint128,
-  callback: Bool
-)
-  match callback with
-  | True =>
-    recipient <- callback_addr;
-
-    is_empty = builtin eq recipient zero_address;
-
-    match is_empty with
-    | False =>
-      call_callback = {
-        _tag: "SwapCallBack";
-        _recipient: recipient;
-        _amount: zero128;
-        initiator: _sender;
-        input_amount: input_amount;
-        output_amount: output_amount;
-        input_token: input_token;
-        output_output: output_output
-      };
-      msg = one_msg call_callback;
-      send msg
-    | True =>
+        new_pool = Pair {Uint128 Uint128} new_zil tokens;
+        pools[addr_rewards_pool] := new_pool
+      end
     end
-  | False =>
   end
 end
 
@@ -500,122 +531,168 @@ procedure MakeSwap(
     output_amount
     zil_reserve
     token_reserve;
-  pools[token_address] := new_pool;
-
-  e = {
-    _eventname: "Swapped";
-    token: token_address;
-    address: _sender;
-    input: input_amount;
-    output: output_amount
-  };
-  event e
+  pools[token_address] := new_pool
 end
 
 procedure SwapOptions(
-  token_address: ByStr20,
+  input_token: ByStr20,
+  output_token: ByStr20,
   direction: SwapDirection,
-  exact_side: ExactSide,
-  exact_amount: Uint128,
-  calculated_amount: Uint128,
-  zil_reserve: Uint128,
-  token_reserve: Uint128,
-  callback: Bool
-)
-  match exact_side with
-  | ExactInput =>
-    match direction with
-    | ZilToToken =>
-      MakeSwap
-        token_address
-        exact_amount
-        calculated_amount
-        zil
-        zil_reserve
-        token_reserve;
-      CallBack
-        zero_address
-        token_address
-        exact_amount
-        calculated_amount
-        callback
-    | TokenToZil =>
-      MakeSwap
-        token_address
-        exact_amount
-        calculated_amount
-        zrc
-        zil_reserve
-        token_reserve;
-      CallBack
-        token_address
-        zero_address
-        exact_amount
-        calculated_amount
-        callback
-    end
-  | ExactOutput =>
-    match direction with
-    | ZilToToken =>
-      MakeSwap
-        token_address
-        calculated_amount
-        exact_amount
-        zil
-        zil_reserve
-        token_reserve
-    | TokenToZil =>
-      MakeSwap
-        token_address
-        calculated_amount
-        exact_amount
-        zrc
-        zil_reserve
-        token_reserve
-    end
-  end
-end
-
-procedure SwapZIL(
-  token_address: ByStr20,
-  direction: SwapDirection,
-  exact_side: ExactSide,
-  pool: Pair Uint128 Uint128,
   exact_amount: Uint128,
   limit_amount: Uint128,
   recipient_address: ByStr20
 )
   fee <- swap_fee;
 
-  match pool with
-  | Pair zil_reserve token_reserve =>
-    zil_reserve_u256 = grow_u128 zil_reserve;
-    token_reserve_u256 = grow_u128 token_reserve;
-    exact_amount_u256 = grow_u128 exact_amount;
+  match direction with
+  | ZilToToken =>
+    some_pool <- pools[output_token];
 
-    calculated_amount_u256 = amount_for
-      direction
-      exact_side
-      exact_amount_u256
-      zil_reserve_u256
-      token_reserve_u256;
+    match some_pool with
+    | Some pool =>
+      match pool with
+      | Pair zil_reserve token_reserve =>
+        exact_amount_u256 = grow_u128 exact_amount;
+        exact_amount_after_fee = after_fee exact_amount_u256 fee;
+        rewards_amount = builtin sub exact_amount_u256 exact_amount_after_fee;
 
-    calculated_amount_u128 = fall_u256 calculated_amount_u256;
-    CheckLimits calculated_amount_u128 limit_amount exact_side;
+        rewards_amount = fall_u256 rewards_amount;
+        exact_amount_u128 = fall_u256 exact_amount_after_fee;
 
-    SwapOptions
-      token_address
-      direction
-      exact_side
-      exact_amount
-      calculated_amount_u128
-      zil_reserve
-      token_reserve
-      tt
-      (* CallTransferFrom exact_amount _sender _this_address token_address;
-      AddFunds recipient_address amount_zil_u128 *)
+        calculated_amount_u256 = output_for
+          exact_amount_u128
+          zil_reserve
+          token_reserve;
+        calculated_amount_u128 = fall_u256 calculated_amount_u256;
+
+        CheckLimits calculated_amount_u128 limit_amount;
+        accept;
+        ReceiveRewards rewards_amount;
+
+        MakeSwap
+          output_token
+          exact_amount_u128
+          calculated_amount_u128
+          zil_denom
+          zil_reserve
+          token_reserve;
+        CallBackSwap
+          input_token
+          output_token
+          exact_amount_u128
+          calculated_amount_u128;
+        CallTransfer recipient_address calculated_amount_u128 output_token
+      end
+    | None =>
+      err = CodePoolMissing;
+      ThrowError err
+    end
+  | TokenToZil =>
+    some_pool <- pools[input_token];
+
+    match some_pool with
+    | Some pool =>
+      match pool with
+      | Pair zil_reserve token_reserve =>
+        calculated_amount_u256 = output_for
+          exact_amount
+          token_reserve
+          zil_reserve;
+        calculated_amount_after_fee_u256 = after_fee calculated_amount_u256 fee;
+        rewards_amount = builtin sub calculated_amount_u256 calculated_amount_after_fee_u256;
+        rewards_amount = fall_u256 rewards_amount;
+        calculated_amount_u128 = fall_u256 calculated_amount_after_fee_u256;
+
+        CheckLimits calculated_amount_u128 limit_amount;
+        ReceiveRewards rewards_amount;
+
+        MakeSwap
+          input_token
+          exact_amount
+          calculated_amount_u128
+          zrc_denom
+          zil_reserve
+          token_reserve;
+      CallBackSwap
+        input_token
+        output_token
+        exact_amount
+        calculated_amount_u128;
+      CallTransferFrom exact_amount _sender _this_address input_token;
+      AddFunds recipient_address calculated_amount_u128
+      end
+    | None =>
+      err = CodePoolMissing;
+      ThrowError err
+    end
+  | TokensToTokens =>
+    some_input_pool <- pools[input_token];
+    some_output_pool <- pools[output_token];
+
+    match some_input_pool with
+    | Some input_pool =>
+      match some_output_pool with
+      | Some output_pool =>
+        match input_pool with
+        | Pair input_zil_reserve input_token_reserve =>
+          match output_pool with
+          | Pair output_zil_reserve output_token_reserve =>
+            CallTransferFrom exact_amount _sender _this_address input_token;
+
+            (* Swap input tokens to ZIL. *)
+            zil_intermediate_amount_u256 = output_for
+              exact_amount
+              input_token_reserve
+              input_zil_reserve;
+            zil_intermediate_amount_after_fee_u256 = after_fee zil_intermediate_amount_u256 fee;
+            rewards_amount = builtin sub zil_intermediate_amount_u256 zil_intermediate_amount_after_fee_u256;
+            rewards_amount = fall_u256 rewards_amount;
+            zil_intermediate_amount_u128 = fall_u256 zil_intermediate_amount_after_fee_u256;
+
+            (* Swap ZIL to output tokens. *)
+            calculated_amount_u256 = output_for
+              zil_intermediate_amount_u128
+              output_zil_reserve
+              output_token_reserve;
+            calculated_amount_u128 = fall_u256 calculated_amount_u256;
+
+            CheckLimits calculated_amount_u128 limit_amount;
+            ReceiveRewards rewards_amount;
+
+            MakeSwap
+              input_token
+              exact_amount
+              zil_intermediate_amount_u128
+              zrc_denom
+              input_zil_reserve
+              input_token_reserve;
+            MakeSwap
+              output_token
+              exact_amount
+              calculated_amount_u128
+              zil_denom
+              output_zil_reserve
+              output_token_reserve;
+            CallBackSwap
+              input_token
+              output_token
+              exact_amount
+              calculated_amount_u128;
+            CallTransfer recipient_address calculated_amount_u128 output_token
+          end
+        end
+      | None =>
+        err = CodePoolMissing;
+        ThrowError err
+      end
+    | None =>
+      err = CodePoolMissing;
+      ThrowError err
+    end
   end
 end
+(* iterations *)
+
 
 (* user interactions *)
 transition AddLiquidity(
@@ -629,22 +706,25 @@ transition AddLiquidity(
   ThrowExpired deadline_block current_block;
   ThrowZeroAddress token_address;
   ThrowZero max_token_amount;
+  ThrowIfSameAddress token_address _sender;
+  ThrowIfSameAddress token_address _this_address;
 
   some_pool <- pools[token_address];
 
   match some_pool with
   | None =>
     CheckMinLP _amount;
-    CallTransferFrom max_token_amount _sender _this_address token_address;
-    accept;
     (* INIT Pool *)
     new_pool = Pair {Uint128 Uint128} _amount max_token_amount;
+
+    CallTransferFrom max_token_amount _sender _this_address token_address;
+    accept;
 
     pools[token_address] := new_pool;
     balances[token_address][_sender] := _amount;
     total_contributions[token_address] := _amount;
 
-    AddLPCallBack _amount max_token_amount;
+    CallBackAddLiquidity _amount max_token_amount;
 
     pool_event = {
       _eventname: "PoolCreated";
@@ -694,7 +774,7 @@ transition AddLiquidity(
       new_pool = Pair {Uint128 Uint128} new_x new_y;
       pools[token_address] := new_pool;
 
-      AddLPCallBack new_x new_y;
+      CallBackAddLiquidity new_x new_y;
 
       existing_balance <- balances[token_address][_sender];
 
@@ -723,6 +803,7 @@ transition RemoveLiquidity(
 )
   current_block <- & BLOCKNUMBER;
 
+  OnlyUnPause;
   ThrowExpired deadline_block current_block;
   ThrowZero contribution_amount;
   ThrowZero min_zil_amount;
@@ -789,9 +870,10 @@ transition RemoveLiquidity(
         total_contributions[token_address] := new_total_contribution
       end;
 
+
       CallTransfer _sender token_amount_u128 token_address;
       AddFunds _sender zil_amount_u128;
-      RemoveLPCallBack zil_amount_u128 token_amount_u128;
+      CallBackRemoveLiquidity zil_amount_u128 token_amount_u128;
 
       e = {
         _eventname: "Burnt";
@@ -815,32 +897,21 @@ transition SwapExactZILForTokens(
 )
   current_block <- & BLOCKNUMBER;
 
+  OnlyUnPause;
   ThrowExpired deadline_block current_block;
   ThrowZero _amount;
   ThrowZero min_token_amount;
   ThrowZeroAddress recipient_address;
 
-  some_pool <- pools[token_address];
+  direction = ZilToToken;
 
-  match some_pool with
-  | Some pool =>
-    direction = ZilToToken;
-    exact_side = ExactInput;
-
-    accept;
-
-    SwapZIL
-      token_address
-      direction
-      exact_side
-      pool
-      _amount
-      min_token_amount
-      recipient_address
-  | None =>
-    err = CodePoolMissing;
-    ThrowError err
-  end
+  SwapOptions
+    zero_address
+    token_address
+    direction
+    _amount
+    min_token_amount
+    recipient_address
 end
 
 transition SwapExactTokensForZIL(
@@ -852,33 +923,24 @@ transition SwapExactTokensForZIL(
 )
   current_block <- & BLOCKNUMBER;
 
+  OnlyUnPause;
   ThrowExpired deadline_block current_block;
   ThrowZero token_amount;
   ThrowZero min_zil_amount;
   ThrowZeroAddress recipient_address;
 
-  some_pool <- pools[token_address];
+  direction = TokenToZil;
 
-  match some_pool with
-  | Some pool =>
-    direction = TokenToZil;
-    exact_side = ExactInput;
-
-    SwapZIL
-      token_address
-      direction
-      exact_side
-      pool
-      token_amount
-      min_zil_amount
-      recipient_address
-  | None =>
-    err = CodePoolMissing;
-    ThrowError err
-  end
+  SwapOptions
+    token_address
+    zero_address
+    direction
+    token_amount
+    min_zil_amount
+    recipient_address
 end
 
-(* transition SwapExactTokensForTokens(
+transition SwapExactTokensForTokens(
   token0_address: ByStr20,
   token1_address: ByStr20,
   token0_amount: Uint128,
@@ -888,125 +950,54 @@ end
 )
   current_block <- & BLOCKNUMBER;
 
+  OnlyUnPause;
   ThrowExpired deadline_block current_block;
   ThrowZero token0_amount;
   ThrowZero min_token1_amount;
   ThrowZeroAddress recipient_address;
+  ThrowIfSameAddress token0_address token1_address;
 
-  some_pool0 <- pools[token0_address];
-  some_pool1 <- pools[token1_address];
+  direction = TokensToTokens;
 
-  match some_pool0 with
-  | Some pool0 =>
-    match some_pool1 with
-    | Some pool1 =>
-      exact_amount0_u256 = grow_u128 token0_amount;
-
-      match pool0 with
-      | Pair zil_reserve0 token_reserve0 =>
-        fee <- swap_fee;
-
-        CallTransferFrom token0_amount _sender _this_address token0_address;
-
-        direction0 = TokenToZil;
-        exact_side0 = ExactInput;
-        zil_reserve0_u256 = grow_u128 zil_reserve0;
-        token_reserve0_u256 = grow_u128 token_reserve0;
-
-        zil_intermediate_amount_u256 = amount_for
-          direction0
-          exact_side0
-          exact_amount0_u256
-          zil_reserve0_u256
-          token_reserve0_u256;
-        amount_token_u256 = get_fee exact_amount0_u256 tokens_fee;
-        tokens_fee_u256 = builtin sub exact_amount0_u256 amount_token_u256;
-
-        tokens_fee_u128 = fall_u256 tokens_fee_u256;
-
-        ReceiveRewards token0_address zero128 tokens_fee_u128;
-
-        match pool1 with
-        | Pair zil_reserve1 token_reserve1 =>
-          direction1 = ZilToToken;
-          exact_side1 = ExactInput;
-          zil_reserve1_u256 = grow_u128 zil_reserve1;
-          token_reserve1_u256 = grow_u128 token_reserve1;
-
-          calculated_amount_u256 = amount_for
-            direction1
-            exact_side1
-            zil_intermediate_amount_u256
-            zil_reserve1_u256
-            token_reserve1_u256;
-
-          amount_token0_u256 = get_fee calculated_amount_u256 tokens_fee;
-          tokens_fee0_u256 = builtin sub calculated_amount_u256 amount_token0_u256;
-          amount_token0_u128 = fall_u256 amount_token0_u256;
-          tokens_fee0_u128 = fall_u256 tokens_fee0_u256;
-  
-          CheckLimits amount_token0_u128 min_token1_amount exact_side1;
-
-          zil_intermediate_amount_u128 = fall_u256 zil_intermediate_amount_u256;
-          SwapOptions
-            token0_address
-            direction0
-            exact_side0
-            token0_amount
-            zil_intermediate_amount_u128
-            zil_reserve0
-            token_reserve0
-            ff;
-          SwapOptions
-            token1_address
-            direction1
-            exact_side1
-            zil_intermediate_amount_u128
-            amount_token0_u128
-            zil_reserve1
-            token_reserve1
-            ff;
-        ReceiveRewards token1_address zero128 tokens_fee_u128;
-          CallTransfer recipient_address amount_token0_u128 token1_address;
-          CallBack
-            token0_address
-            token1_address
-            token0_amount
-            amount_token0_u128
-            tt
-        end
-      end
-    | None =>
-      err = CodePoolMissing;
-      ThrowError err
-    end
-  | None =>
-    err = CodePoolMissing;
-    ThrowError err
-  end
-end *)
+  SwapOptions
+    token0_address
+    token1_address
+    direction
+    token0_amount
+    min_token1_amount
+    recipient_address
+end
 (* user interactions *)
 
 
 (* admin interactions *)
-transition SetFee(new_fee: Uint256)
-  OwnerOnly;
-  swap_fee := new_fee
-end
-
-transition SetCallBackAddress(addr: ByStr20)
-  OwnerOnly;
-  callback_addr := addr
-end
-
 transition SetRewardsPoolAddress(addr: ByStr20)
   OwnerOnly;
   rewards_pool := addr
 end
 
-transition SetNewMinLP(new_min_lp: Uint128)
+transition SetFee(new_fee: Uint256)
   OwnerOnly;
-  min_lp := new_min_lp
+  swap_fee := new_fee
+end
+
+transition SetProxyContract(new_addr: ByStr20)
+  OwnerOnly;
+  callback_addr := new_addr
+end
+
+transition TogglePause()
+  OwnerOnly;
+
+  current_pause <- pause;
+  is_zero = builtin eq current_pause zero32;
+
+  match is_zero with
+  | True =>
+    pause := one32
+  | False =>
+    pause := zero32
+  end
 end
 (* admin interactions *)
 
