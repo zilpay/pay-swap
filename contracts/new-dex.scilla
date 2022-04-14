@@ -956,6 +956,11 @@ transition SetFee(new_fee: Uint256)
   OwnerOnly;
   swap_fee := new_fee
 end
+
+transition SetProxyContract(new_addr: ByStr20)
+  OwnerOnly;
+  callback_addr := new_addr
+end
 (* admin interactions *)
 
 
