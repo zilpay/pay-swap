@@ -378,6 +378,10 @@ procedure SwapOptions(
   limit_amount: Uint128,
   recipient_address: ByStr20
 )
+  fee <- swap_fee;
+
+  exact_amount_u256 = grow_u128 exact_amount;
+
   match direction with
   | ZilToToken =>
     some_pool <- pools[output_token];
@@ -386,11 +390,7 @@ procedure SwapOptions(
     | Some pool =>
       match pool with
       | Pair zil_reserve token_reserve =>
-        fee <- swap_fee;
-
-        exact_amount_u256 = grow_u128 exact_amount;
-        half_fee = builtin div fee two256;
-        exact_amount_after_fee = after_fee exact_amount_u256 half_fee;
+        exact_amount_after_fee = after_fee exact_amount_u256 fee;
         rewards_amount = builtin sub exact_amount_u256 exact_amount_after_fee;
 
         rewards_amount = fall_u256 rewards_amount;
@@ -433,11 +433,13 @@ procedure SwapOptions(
           exact_amount
           token_reserve
           zil_reserve;
-        calculated_amount_u128 = fall_u256 calculated_amount_u256;
+        calculated_amount_after_fee_u256 = after_fee calculated_amount_u256 fee;
+        rewards_amount = builtin sub calculated_amount_u256 calculated_amount_after_fee_u256;
+        rewards_amount = fall_u256 rewards_amount;
+        calculated_amount_u128 = fall_u256 calculated_amount_after_fee_u256;
 
         CheckLimits calculated_amount_u128 limit_amount;
-
-        (* Add Fee *)
+        ReceiveRewards rewards_amount;
 
         MakeSwap
           input_token
@@ -473,7 +475,10 @@ procedure SwapOptions(
               exact_amount
               input_token_reserve
               input_zil_reserve;
-            zil_intermediate_amount_u128 = fall_u256 zil_intermediate_amount_u256;
+            zil_intermediate_amount_after_fee_u256 = after_fee zil_intermediate_amount_u256 fee;
+            rewards_amount = builtin sub zil_intermediate_amount_u256 zil_intermediate_amount_after_fee_u256;
+            rewards_amount = fall_u256 rewards_amount;
+            zil_intermediate_amount_u128 = fall_u256 zil_intermediate_amount_after_fee_u256;
 
             (* Swap ZIL to output tokens. *)
             calculated_amount_u256 = output_for
@@ -483,8 +488,7 @@ procedure SwapOptions(
             calculated_amount_u128 = fall_u256 calculated_amount_u256;
 
             CheckLimits calculated_amount_u128 limit_amount;
-
-            (* Add Fee *)
+            ReceiveRewards rewards_amount;
 
             MakeSwap
               input_token
