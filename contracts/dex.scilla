@@ -156,10 +156,8 @@ let output_for =
     let exact_amount_u256 = grow_u128 input_amount in
     let input_reserve_u256 = grow_u128 input_reserve in
     let output_reserve_u256 = grow_u128 output_reserve in
-
     let exact_amount_after_fee = builtin mul exact_amount_u256 fee in
     let numerator = builtin mul exact_amount_after_fee output_reserve_u256 in
-
     let input_reserve_after_fee = builtin mul input_reserve_u256 fee_demon in
     let denominator = builtin add input_reserve_after_fee exact_amount_after_fee in
       builtin div numerator denominator
@@ -232,8 +230,14 @@ field total_contributions: Map ByStr20 Uint128 = Emp ByStr20 Uint128
 (* token -> _sender -> started_zil_reserve *)
 field balances: Map ByStr20 (Map ByStr20 Uint128) = Emp ByStr20 (Map ByStr20 Uint128)
 
-(* fee for each swap - zil_fee, token_fee *)
-field swap_fee: Uint256 = fee_demon
+(* protocol rewards *)
+field rewards: Uint128 = zero128
+
+(* fee for liquidity providers *)
+field liquidity_fee: Uint256 = fee_demon
+
+(* fee for protocol *)
+field protocol_fee: Uint256 = fee_demon
 
 (* Min number zil for LP providers. *)
 field min_lp: Uint128 = Uint128 1
@@ -506,7 +510,7 @@ procedure SwapOptions(
   limit_amount: Uint128,
   recipient_address: ByStr20
 )
-  fee <- swap_fee;
+  lp_fee <- liquidity_fee;
 
   match direction with
   | ZilToToken =>
@@ -520,7 +524,7 @@ procedure SwapOptions(
           exact_amount
           zil_reserve
           token_reserve
-          fee;
+          lp_fee;
         calculated_amount_u128 = fall_u256 calculated_amount_u256;
 
         CheckLimits calculated_amount_u128 limit_amount;
@@ -555,7 +559,7 @@ procedure SwapOptions(
           exact_amount
           token_reserve
           zil_reserve
-          fee;
+          lp_fee;
         output_zil_amount_u128 = fall_u256 calculated_amount_u256;
 
         CheckLimits output_zil_amount_u128 limit_amount;
@@ -598,7 +602,7 @@ procedure SwapOptions(
               exact_amount
               input_token_reserve
               input_zil_reserve
-              fee;
+              lp_fee;
             output_zil_amount_u128 = fall_u256 zil_intermediate_amount_u256;
 
             (* Swap ZIL to output tokens. *)
@@ -606,7 +610,7 @@ procedure SwapOptions(
               output_zil_amount_u128
               output_zil_reserve
               output_token_reserve
-              fee;
+              fee_demon;
             output_tokens_amount_u128 = fall_u256 calculated_amount_u256;
 
             CheckLimits output_tokens_amount_u128 limit_amount;
@@ -922,9 +926,14 @@ end
 (* user interactions *)
 
 
-transition SetFee(new_fee: Uint256)
+transition SetLiquidityFee(new_fee: Uint256)
   OwnerOnly;
-  swap_fee := new_fee
+  liquidity_fee := new_fee
+end
+
+transition SetProtocolFee(new_fee: Uint256)
+  OwnerOnly;
+  protocol_fee := new_fee
 end
 
 transition SetProxyContract(new_addr: ByStr20)
