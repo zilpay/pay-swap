@@ -35,8 +35,6 @@ let zero32 = Uint32 0
 
 let one32 = Uint32 1
 let one128 = Uint128 1
-let two128 = Uint128 2
-let two256 = Uint256 2
 let fee_demon = Uint256 10000
 
 let tt = True
