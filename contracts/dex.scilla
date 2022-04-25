@@ -235,7 +235,7 @@ field rewards: Uint128 = zero128
 field liquidity_fee: Uint256 = fee_demon
 
 (* fee for protocol *)
-field protocol_fee: Uint256 = fee_demon
+field protocol_fee: Uint128 = Uint128 500
 
 (* Min number zil for LP providers. *)
 field min_lp: Uint128 = Uint128 1
@@ -403,6 +403,15 @@ procedure CallTransfer(to: ByStr20, amount: Uint128, recipient: ByStr20)
   send msgs
 end
 
+procedure RecieveRewards(amount: Uint128)
+  current_rewards <- rewards;
+
+  new_rewards = builtin add current_rewards amount;
+
+  rewards := new_rewards
+end
+
+
 procedure CallBackSwap(
   input_token: ByStr20,
   output_token: ByStr20,
@@ -509,6 +518,7 @@ procedure SwapOptions(
   recipient_address: ByStr20
 )
   lp_fee <- liquidity_fee;
+  proto_fee <- protocol_fee;
 
   match direction with
   | ZilToToken =>
@@ -518,8 +528,10 @@ procedure SwapOptions(
     | Some pool =>
       match pool with
       | Pair zil_reserve token_reserve =>
+        proto_rewards = builtin div exact_amount proto_fee;
+        exact_amount_after_fee = builtin sub exact_amount proto_rewards;
         calculated_amount_u256 = output_for
-          exact_amount
+          exact_amount_after_fee
           zil_reserve
           token_reserve
           lp_fee;
@@ -528,9 +540,10 @@ procedure SwapOptions(
         CheckLimits calculated_amount_u128 limit_amount;
         accept;
 
+        RecieveRewards proto_rewards;
         MakeSwap
           output_token
-          exact_amount
+          exact_amount_after_fee
           calculated_amount_u128
           zil_denom
           zil_reserve
@@ -538,7 +551,7 @@ procedure SwapOptions(
         CallBackSwap
           input_token
           output_token
-          exact_amount
+          exact_amount_after_fee
           calculated_amount_u128;
         CallTransfer recipient_address calculated_amount_u128 output_token
       end
@@ -560,22 +573,26 @@ procedure SwapOptions(
           lp_fee;
         output_zil_amount_u128 = fall_u256 calculated_amount_u256;
 
-        CheckLimits output_zil_amount_u128 limit_amount;
-
         MakeSwap
+            input_token
+            exact_amount
+            output_zil_amount_u128
+            zrc_denom
+            zil_reserve
+            token_reserve;
+
+        proto_rewards = builtin div output_zil_amount_u128 proto_fee;
+        output_zil_amount_u128 = builtin sub output_zil_amount_u128 proto_rewards;
+
+        RecieveRewards proto_rewards;
+        CallBackSwap
           input_token
+          output_token
           exact_amount
-          output_zil_amount_u128
-          zrc_denom
-          zil_reserve
-          token_reserve;
-      CallBackSwap
-        input_token
-        output_token
-        exact_amount
-        output_zil_amount_u128;
-      CallTransferFrom exact_amount _sender _this_address input_token;
-      AddFunds recipient_address output_zil_amount_u128
+          output_zil_amount_u128;
+        CheckLimits output_zil_amount_u128 limit_amount;
+        CallTransferFrom exact_amount _sender _this_address input_token;
+        AddFunds recipient_address output_zil_amount_u128
       end
     | None =>
       err = CodePoolMissing;
@@ -602,10 +619,12 @@ procedure SwapOptions(
               input_zil_reserve
               lp_fee;
             output_zil_amount_u128 = fall_u256 zil_intermediate_amount_u256;
+            proto_rewards = builtin div output_zil_amount_u128 proto_fee;
+            zil_intermediate_amount = builtin sub output_zil_amount_u128 proto_rewards;
 
             (* Swap ZIL to output tokens. *)
             calculated_amount_u256 = output_for
-              output_zil_amount_u128
+              zil_intermediate_amount
               output_zil_reserve
               output_token_reserve
               fee_demon;
@@ -613,6 +632,7 @@ procedure SwapOptions(
 
             CheckLimits output_tokens_amount_u128 limit_amount;
 
+            RecieveRewards proto_rewards;
             MakeSwap
               input_token
               exact_amount
@@ -622,7 +642,7 @@ procedure SwapOptions(
               input_token_reserve;
             MakeSwap
               output_token
-              output_zil_amount_u128
+              zil_intermediate_amount
               output_tokens_amount_u128
               zil_denom
               output_zil_reserve
@@ -929,7 +949,7 @@ transition SetLiquidityFee(new_fee: Uint256)
   liquidity_fee := new_fee
 end
 
-transition SetProtocolFee(new_fee: Uint256)
+transition SetProtocolFee(new_fee: Uint128)
   OwnerOnly;
   protocol_fee := new_fee
 end
@@ -937,6 +957,16 @@ end
 transition SetProxyContract(new_addr: ByStr20)
   OwnerOnly;
   callback_addr := new_addr
+end
+
+transition ClaimRwards()
+  OwnerOnly;
+
+  current_rewards <- rewards;
+  wallet <- owner;
+
+  current_rewards := zero128;
+  AddFunds wallet current_rewards
 end
 
 transition TogglePause()
