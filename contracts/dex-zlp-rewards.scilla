@@ -127,7 +127,7 @@ let grow_u128: Uint128 -> Uint256 =
     let some_big = builtin to_uint256 v in
     match some_big with
     | Some big => big
-    | None => builtin div one32 zero32 (* should never happen *)
+    | None => builtin div fee_demon zero256 (* should never happen *)
     end
 
 let fall_u256: Uint256 -> Uint128 =
@@ -135,7 +135,7 @@ let fall_u256: Uint256 -> Uint128 =
     let some_u128 = builtin to_uint128 v in
     match some_u128 with
     | Some u => u
-    | None => builtin div one32 zero32 (* should never happen *)
+    | None => builtin div one128 zero128 (* should never happen *)
     end
 
 (* computes the amount of the fraction x / d that is in y *)
@@ -228,9 +228,6 @@ field total_contributions: Map ByStr20 Uint128 = Emp ByStr20 Uint128
 (* token -> _sender -> started_zil_reserve *)
 field balances: Map ByStr20 (Map ByStr20 Uint128) = Emp ByStr20 (Map ByStr20 Uint128)
 
-(* protocol rewards *)
-field rewards: Uint128 = zero128
-
 (* fee for liquidity providers *)
 field liquidity_fee: Uint256 = fee_demon
 
@@ -242,6 +239,9 @@ field min_lp: Uint128 = Uint128 1
 
 (* A callback for interact with another contract. *)
 field callback_addr: ByStr20 = zero_address
+
+(* A Pool for swap rewards. *)
+field rewards_pool: ByStr20 = zero_address
 
 (* Pause for contract *)
 field pause: Uint32 = zero32
@@ -385,6 +385,23 @@ procedure OperatorOnly()
 end
 (* Checkers *)
 
+procedure MakeSwap(
+  token_address: ByStr20,
+  input_amount: Uint128,
+  output_amount: Uint128,
+  denom: Denom,
+  zil_reserve: Uint128,
+  token_reserve: Uint128
+)
+  new_pool = pool_from_denom
+    denom
+    input_amount
+    output_amount
+    zil_reserve
+    token_reserve;
+  pools[token_address] := new_pool
+end
+
 (* MSG CALL *)
 procedure AddFunds(recipient: ByStr20, amount: Uint128)
   msg = {
@@ -421,12 +438,34 @@ procedure CallTransfer(to: ByStr20, amount: Uint128, recipient: ByStr20)
   send msgs
 end
 
-procedure RecieveRewards(amount: Uint128)
-  current_rewards <- rewards;
+procedure RecieveRewards(exact_amount: Uint128, recipient_address: ByStr20)
+  output_token <- rewards_pool;
+  some_pool <- pools[output_token];
 
-  new_rewards = builtin add current_rewards amount;
+  match some_pool with
+  | Some pool =>
+    match pool with
+    | Pair zil_reserve token_reserve =>
+      calculated_amount_u256 = output_for
+        exact_amount
+        zil_reserve
+        token_reserve
+        fee_demon;
+      calculated_amount_u128 = fall_u256 calculated_amount_u256;
 
-  rewards := new_rewards
+      MakeSwap
+        output_token
+        exact_amount
+        calculated_amount_u128
+        zil_denom
+        zil_reserve
+        token_reserve;
+      CallTransfer recipient_address calculated_amount_u128 output_token
+    end
+  | None =>
+    err = CodePoolMissing;
+    ThrowError err
+  end
 end
 
 
@@ -473,22 +512,6 @@ end
 (* MSG CALL *)
 
 (* iterations *)
-procedure MakeSwap(
-  token_address: ByStr20,
-  input_amount: Uint128,
-  output_amount: Uint128,
-  denom: Denom,
-  zil_reserve: Uint128,
-  token_reserve: Uint128
-)
-  new_pool = pool_from_denom
-    denom
-    input_amount
-    output_amount
-    zil_reserve
-    token_reserve;
-  pools[token_address] := new_pool
-end
 
 procedure SwapOptions(
   input_token: ByStr20,
@@ -521,7 +544,7 @@ procedure SwapOptions(
         CheckLimits calculated_amount_u128 limit_amount;
         accept;
 
-        RecieveRewards proto_rewards;
+        RecieveRewards proto_rewards recipient_address;
         MakeSwap
           output_token
           exact_amount_after_fee
@@ -565,7 +588,7 @@ procedure SwapOptions(
         proto_rewards = builtin div output_zil_amount_u128 proto_fee;
         output_zil_amount_u128 = builtin sub output_zil_amount_u128 proto_rewards;
 
-        RecieveRewards proto_rewards;
+        RecieveRewards proto_rewards recipient_address;
         EmitSwap
           input_token
           output_token
@@ -613,7 +636,7 @@ procedure SwapOptions(
 
             CheckLimits output_tokens_amount_u128 limit_amount;
 
-            RecieveRewards proto_rewards;
+            RecieveRewards proto_rewards recipient_address;
             MakeSwap
               input_token
               exact_amount
@@ -940,14 +963,17 @@ transition SetProxyContract(new_addr: ByStr20)
   callback_addr := new_addr
 end
 
-transition ClaimRwards()
+transition SetRewardsPool(new_addr: ByStr20)
   OwnerOnly;
+  some_pool <- pools[new_addr];
 
-  current_rewards <- rewards;
-  wallet <- owner;
-
-  rewards := zero128;
-  AddFunds wallet current_rewards
+  match some_pool with
+  | Some pool =>
+    rewards_pool := new_addr
+  | None =>
+    err = CodePoolMissing;
+    ThrowError err
+  end
 end
 
 transition TogglePause()
