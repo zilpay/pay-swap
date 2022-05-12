@@ -528,7 +528,7 @@ procedure SwapOptions(
         CheckLimits calculated_amount_u128 limit_amount;
         accept;
 
-        RecieveRewards proto_rewards recipient_address output_token;
+        RecieveRewards proto_rewards recipient_address sup_token;
         MakeSwap
           output_token
           exact_amount_after_fee
@@ -572,7 +572,7 @@ procedure SwapOptions(
         proto_rewards = get_amount_with_fee output_token sup_token proto_fee output_zil_amount_u128;
         output_zil_amount_u128 = builtin sub output_zil_amount_u128 proto_rewards;
 
-        RecieveRewards proto_rewards recipient_address output_token;
+        RecieveRewards proto_rewards recipient_address sup_token;
         EmitSwap
           input_token
           output_token
@@ -620,7 +620,7 @@ procedure SwapOptions(
 
             CheckLimits output_tokens_amount_u128 limit_amount;
 
-            RecieveRewards proto_rewards recipient_address output_token;
+            RecieveRewards proto_rewards recipient_address sup_token;
             MakeSwap
               input_token
               exact_amount
