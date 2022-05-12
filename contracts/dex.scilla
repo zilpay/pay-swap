@@ -263,6 +263,23 @@ procedure emitMintPool(token_address: ByStr20, address: ByStr20, amount: Uint128
   event e
 end
 
+procedure EmitSwap(
+  input_token: ByStr20,
+  output_token: ByStr20,
+  input_amount: Uint128,
+  output_amount: Uint128
+)
+  e = {
+    _eventname: "Swapped";
+    initiator: _sender;
+    input_token: input_token;
+    output_token: output_token;
+    input_amount: input_amount;
+    output_amount: output_amount
+  };
+  event e
+end
+
 (* EVENTS *)
 
 (* Checkers *)
@@ -298,6 +315,7 @@ procedure CheckMinLP(lp: Uint128)
   end
 end
 
+(* TODO: add <= *)
 procedure ThrowExpired(deadline_block: BNum, current_block: BNum)
   is_not_expired = builtin blt current_block deadline_block;
   match is_not_expired with
@@ -412,43 +430,6 @@ procedure RecieveRewards(amount: Uint128)
 end
 
 
-procedure CallBackSwap(
-  input_token: ByStr20,
-  output_token: ByStr20,
-  input_amount: Uint128,
-  output_amount: Uint128
-)
-  recipient <- callback_addr;
-  is_empty = builtin eq recipient zero_address;
-
-  e = {
-    _eventname: "Swapped";
-    initiator: _sender;
-    input_token: input_token;
-    output_token: output_token;
-    input_amount: input_amount;
-    output_amount: output_amount
-  };
-  event e;
-
-  match is_empty with
-  | False =>
-    call_callback = {
-      _tag: "CallBackSwap";
-      _recipient: recipient;
-      _amount: zero128;
-      initiator: _sender;
-      input_token: input_token;
-      output_token: output_token;
-      input_amount: input_amount;
-      output_amount: output_amount
-    };
-    msg = one_msg call_callback;
-    send msg
-  | True =>
-  end
-end
-
 procedure CallBackRemoveLiquidity(zil: Uint128, tokens: Uint128)
   recipient <- callback_addr;
   is_empty = builtin eq recipient zero_address;
@@ -548,7 +529,7 @@ procedure SwapOptions(
           zil_denom
           zil_reserve
           token_reserve;
-        CallBackSwap
+        EmitSwap
           input_token
           output_token
           exact_amount_after_fee
@@ -585,7 +566,7 @@ procedure SwapOptions(
         output_zil_amount_u128 = builtin sub output_zil_amount_u128 proto_rewards;
 
         RecieveRewards proto_rewards;
-        CallBackSwap
+        EmitSwap
           input_token
           output_token
           exact_amount
@@ -647,7 +628,7 @@ procedure SwapOptions(
               zil_denom
               output_zil_reserve
               output_token_reserve;
-            CallBackSwap
+            EmitSwap
               input_token
               output_token
               exact_amount
