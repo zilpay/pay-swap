@@ -193,6 +193,13 @@ let get_amount_with_fee =
       | False => builtin div amount fee
       end
 
+let block_lte =
+  fun (deadline_block: BNum) =>
+  fun (current_block: BNum) =>
+    let lt = builtin blt current_block deadline_block in
+    let eq = builtin eq current_block deadline_block in
+      orb lt eq
+
 
 contract DragonDexContract
 (
@@ -299,9 +306,9 @@ procedure CheckMinLP(lp: Uint128)
   end
 end
 
-(* TODO: add <= *)
 procedure ThrowExpired(deadline_block: BNum, current_block: BNum)
-  is_not_expired = builtin blt current_block deadline_block;
+  is_not_expired = block_lte deadline_block current_block;
+
   match is_not_expired with
   | True =>
   | False =>
@@ -489,7 +496,6 @@ end
 (* MSG CALL *)
 
 (* iterations *)
-
 procedure SwapOptions(
   input_token: ByStr20,
   output_token: ByStr20,
