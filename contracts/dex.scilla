@@ -980,12 +980,19 @@ transition SetRewardsPool(new_addr: ByStr20)
   OwnerOnly;
   some_pool <- pools[new_addr];
 
-  match some_pool with
-  | Some pool =>
-    rewards_pool := new_addr
-  | None =>
-    err = CodePoolMissing;
-    ThrowError err
+  is_zero = builtin eq new_addr zero_address;
+
+  match is_zero with
+  | True =>
+    rewards_pool := zero_address
+  | False =>
+    match some_pool with
+    | Some pool =>
+      rewards_pool := new_addr
+    | None =>
+      err = CodePoolMissing;
+      ThrowError err
+    end
   end
 end
 
