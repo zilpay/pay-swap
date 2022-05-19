@@ -38,6 +38,8 @@ let two32 = Uint32 2
 let one128 = Uint128 1
 let fee_demon = Uint256 10000
 
+let nil_addr_list = Nil {ByStr20}
+
 let zil_denom = Zil
 let zrc_denom = Token
 
@@ -118,6 +120,7 @@ let option_value =
 
 let option_uint128 = @option_value Uint128
 let option_uint32 = @option_value Uint32
+let option_list_addr = @option_value (List ByStr20)
 let addr_exists = @list_exists ByStr20
 let list_length_addr = @list_length ByStr20
 
@@ -231,7 +234,7 @@ contract DragonDexContract
 field owner: ByStr20 = init_owner
 
 (* operators approvals for onwer transfer *)
-field transfer_owner_approvals: Map ByStr20 Uint32 = Emp ByStr20 Uint32
+field transfer_owner_approvals: Map ByStr20 (List ByStr20) = Emp ByStr20 (List ByStr20)
 
 (* POOL token -> Pair{zil_reserve, token_reserve} *)
 field pools: Map ByStr20 (Pair Uint128 Uint128) = Emp ByStr20 (Pair Uint128 Uint128)
@@ -1048,18 +1051,20 @@ transition TransferOwnership(new_owner: ByStr20)
   OperatorOnly;
   some_power <- transfer_owner_approvals[new_owner];
 
-  power = option_uint32 zero32 some_power;
+  power_list = option_list_addr nil_addr_list some_power;
+  new_power_list = Cons {ByStr20} _sender power_list;
   number_of_operators = list_length_addr operators;
+  number_of_power = list_length_addr new_power_list;
 
-  new_power = builtin add power one32;
   need_power = builtin div number_of_operators two32;
-  is_approved = builtin lt need_power new_power;
+  is_approved = builtin lt need_power number_of_power;
 
   match is_approved with
   | True =>
     owner := new_owner;
     delete transfer_owner_approvals[new_owner]
   | False =>
+    transfer_owner_approvals[new_owner] := new_power_list
   end
 end
 (* operator interactions *)
