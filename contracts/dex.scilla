@@ -884,16 +884,16 @@ transition RemoveLiquidity(
         delete total_contributions[token_address]
       | False =>
         new_pool = Pair {Uint128 Uint128} new_x new_y;
-        is_empty_total_contribution = builtin eq new_total_contribution zero128;
+        is_empty_balances = builtin eq new_balance zero128;
 
         pools[token_address] := new_pool;
-        balances[_sender][token_address] := new_balance;
+        total_contributions[token_address] := new_total_contribution;
 
-        match is_empty_total_contribution with
+        match is_empty_balances with
         | True =>
-          delete total_contributions[token_address]
+          delete balances[_sender][token_address]
         | False =>
-          total_contributions[token_address] := new_total_contribution
+          balances[_sender][token_address] := new_balance;
         end
       end;
 
