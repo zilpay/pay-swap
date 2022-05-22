@@ -1,0 +1,212 @@
+scilla_version 0
+
+(***************************************************)
+(*               Associated library                *)
+(***************************************************)
+import IntUtils
+
+library ScamURL
+
+(* Error events *)
+type Error =
+  | CodeIsNotManagementContract
+  | CodeURLExists
+  | CodeURLNotExists
+  | CodeDomainExists
+  | CodeDomainNotExists
+  | CodeNotOwner
+
+type Dummy =
+  | Dummy
+
+(* Dummy user-defined ADT *)
+type Unit =
+  | Unit
+
+let verdad = Dummy
+let zero = Uint128 0
+
+let one_msg = 
+  fun (msg : Message) => 
+  let nil_msg = Nil {Message} in
+    Cons {Message} msg nil_msg
+
+let two_msgs =
+fun (msg1 : Message) =>
+fun (msg2 : Message) =>
+  let msgs_tmp = one_msg msg2 in
+    Cons {Message} msg1 msgs_tmp
+
+
+let make_error =
+  fun (result : Error) =>
+    let result_code = 
+      match result with
+      | CodeIsNotManagementContract => Int32 -1
+      | CodeURLExists               => Int32 -2
+      | CodeURLNotExists            => Int32 -3
+      | CodeDomainExists            => Int32 -4
+      | CodeDomainNotExists         => Int32 -5
+      | CodeNotOwner                => Int32 -6
+      end
+    in
+    { _exception : "Error"; code : result_code }
+
+let get_val =
+  fun (some_val: Option Uint128) =>
+  match some_val with
+  | Some val => val
+  | None => zero
+  end
+
+(***************************************************)
+(*             The contract definition             *)
+(***************************************************)
+
+contract ScamURL
+(
+  owner: ByStr20
+)
+
+(* Mutable fields *)
+
+(* mapping between url to category*)
+field urls: Map String Uint32 = Emp String Uint32
+
+(* mapping between domain to category*)
+field domains: Map String Uint32 = Emp String Uint32
+
+(* management contract*)
+field managers: Map ByStr20 Dummy = Emp ByStr20 Dummy
+
+(**************************************)
+(*             Procedures             *)
+(**************************************)
+
+procedure ThrowError(err : Error)
+  e = make_error err;
+  throw e
+end
+
+procedure OnlyManagemer()
+  is_exists <- exists managers[_sender];
+  match is_exists with
+  | False =>
+    err = CodeIsNotManagementContract;
+    ThrowError err
+  | True =>
+  end
+end
+
+procedure OnlyOwner()
+  is_owner = builtin eq owner _sender;
+  match is_owner with
+  | False =>
+    err = CodeNotOwner;
+    ThrowError err
+  | True =>
+  end
+end
+
+procedure ConfigurationManager(addr: ByStr20)
+  is_exists <- exists managers[addr];
+
+  match is_exists with
+  | True =>
+    delete managers[addr];
+    e = {
+      _eventname: "DeletedManager";
+      addr: addr
+    }
+  | False =>
+    managers[addr] := verdad;
+    e = {
+      _eventname: "AddedManager";
+      addr: addr
+    }
+  end
+end
+
+
+transition ConfigurationManagers(addresses: List ByStr20)
+  OnlyOwner;
+
+  forall addresses ConfigurationManager
+end
+
+transition AddURL(url: String, category: Uint32)
+  OnlyManagemer;
+
+  is_exists_url <- exists urls[url];
+
+  match is_exists_url with
+  | True =>
+    err = CodeURLExists;
+    ThrowError err
+  | False =>
+    urls[url] := category;
+    e = {
+      _eventname: "AddURLSuccess";
+      url: url
+    }
+  end
+end
+
+
+transition RemoveURL(url: String)
+  OnlyManagemer;
+
+  is_exists_url <- exists urls[url];
+
+  match is_exists_url with
+  | True => 
+    delete urls[url];
+    e = {
+      _eventname: "RemoveURLSuccess";
+      url: url
+    };
+    event e
+  | False =>
+    err = CodeURLNotExists;
+    ThrowError err
+  end
+end
+
+
+transition AddDomain(domain: String,  category: Uint32)
+  OnlyManagemer;
+
+  is_exists_domain <- exists domains[domain];
+
+  match is_exists_domain with
+  | True =>
+    err = CodeDomainExists;
+    ThrowError err
+  | False =>
+    domains[domain] := category;
+    e = {
+      _eventname: "AddDomainSuccess";
+      domain: domain
+    }
+  end
+end
+
+transition RemoveDomain(domain: String)
+  OnlyManagemer;
+
+  is_exists_domain <- exists domains[domain];
+
+  match is_exists_domain with
+  | True => 
+    delete domains[domain];
+    (* Emit success event *)
+    e = {
+      _eventname: "RemoveDomainSuccess";
+      domain: domain
+    };
+    event e
+  | False =>
+    err = CodeDomainNotExists;
+    ThrowError err
+  end
+end
