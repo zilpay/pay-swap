@@ -893,7 +893,7 @@ transition RemoveLiquidity(
         | True =>
           delete balances[_sender][token_address]
         | False =>
-          balances[_sender][token_address] := new_balance;
+          balances[_sender][token_address] := new_balance
         end
       end;
 
