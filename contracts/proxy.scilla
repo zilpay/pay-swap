@@ -1,0 +1,35 @@
+scilla_version 0
+
+import IntUtils
+
+library DragonDexProxyLib
+
+
+type Error =
+  | CodeNotContractOwner
+
+
+let zero_address = 0x0000000000000000000000000000000000000000
+
+
+contract DragonDexProxyContract
+()
+
+
+field balances: Map ByStr20 (Map ByStr20 Uint128) = Emp ByStr20 (Map ByStr20 Uint128)
+
+
+procedure ThrowError(err : Error)
+  e = make_error err;
+  throw e
+end
+
+
+transition CallBackRemoveLiquidity(initiator: ByStr20, balance: Uint128, total_contributions: Uint128, token: ByStr20)
+end
+
+transition CallBackCreateLiquidity(initiator: ByStr20, balance: Uint128, total_contributions: Uint128, token: ByStr20)
+end
+
+transition CallBackAddLiquidity(initiator: ByStr20, balance: Uint128, total_contributions: Uint128, token: ByStr20)
+end

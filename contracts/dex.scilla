@@ -32,6 +32,7 @@ let zero_address = 0x0000000000000000000000000000000000000000
 let zero128 = Uint128 0
 let zero256 = Uint256 0
 let zero32 = Uint32 0
+let zerobn = BNum 0
 
 let one32 = Uint32 1
 let two32 = Uint32 2
@@ -244,6 +245,9 @@ field total_contributions: Map ByStr20 Uint128 = Emp ByStr20 Uint128
 
 (* _sender -> token -> started_zil_reserve *)
 field balances: Map ByStr20 (Map ByStr20 Uint128) = Emp ByStr20 (Map ByStr20 Uint128)
+
+(* _sender -> token -> block_number *)
+field block_record: Map ByStr20 (Map ByStr20 BNum) = Emp ByStr20 (Map ByStr20 BNum)
 
 (* fee for liquidity providers *)
 field liquidity_fee: Uint256 = fee_demon
@@ -488,69 +492,16 @@ procedure RecieveRewards(exact_amount: Uint128, recipient_address: ByStr20, outp
   end
 end
 
-procedure CallBackRemoveLiquidity(zil: Uint128, tokens: Uint128, addr: ByStr20)
-  recipient <- callback_addr;
-  is_empty = builtin eq recipient zero_address;
+procedure RecordBlock(token: ByStr20, block: BNum)
+  is_zero = builtin eq zerobn block;
 
-  match is_empty with
-  | False =>
-    call_callback = {
-      _tag: "CallBackRemoveLiquidity";
-      _recipient: recipient;
-      _amount: zero128;
-      initiator: _sender;
-      zil: zil;
-      tokens: tokens;
-      addr: addr
-    };
-    msg = one_msg call_callback;
-    send msg
+  match is_zero with
   | True =>
+    delete block_record[_sender][token]
+  | False =>
+    block_record[_sender][token] := block
   end
 end
-
-procedure CallBackCreateLiquidity(zil: Uint128, tokens: Uint128, addr: ByStr20)
-  recipient <- callback_addr;
-  is_empty = builtin eq recipient zero_address;
-
-  match is_empty with
-  | False =>
-    call_callback = {
-      _tag: "CallBackCreateLiquidity";
-      _recipient: recipient;
-      _amount: zero128;
-      initiator: _sender;
-      zil: zil;
-      tokens: tokens;
-      addr: addr
-    };
-    msg = one_msg call_callback;
-    send msg
-  | True =>
-  end
-end
-
-procedure CallBackAddLiquidity(zil: Uint128, tokens: Uint128, addr: ByStr20)
-  recipient <- callback_addr;
-  is_empty = builtin eq recipient zero_address;
-
-  match is_empty with
-  | False =>
-    call_callback = {
-      _tag: "CallBackAddLiquidity";
-      _recipient: recipient;
-      _amount: zero128;
-      initiator: _sender;
-      zil: zil;
-      tokens: tokens;
-      addr: addr
-    };
-    msg = one_msg call_callback;
-    send msg
-  | True =>
-  end
-end
-
 (* MSG CALL *)
 
 (* iterations *)
@@ -723,6 +674,7 @@ transition AddLiquidity(
 )
   current_block <- & BLOCKNUMBER;
 
+  OnlyUnPause;
   ThrowExpired deadline_block current_block;
   ThrowZeroAddress token_address;
   ThrowZero max_token_amount;
@@ -743,8 +695,6 @@ transition AddLiquidity(
     pools[token_address] := new_pool;
     balances[_sender][token_address] := _amount;
     total_contributions[token_address] := _amount;
-
-    CallBackCreateLiquidity _amount max_token_amount token_address;
 
     pool_event = {
       _eventname: "PoolCreated";
@@ -794,8 +744,6 @@ transition AddLiquidity(
       new_pool = Pair {Uint128 Uint128} new_x new_y;
       pools[token_address] := new_pool;
 
-      CallBackAddLiquidity new_x new_y token_address;
-
       existing_balance <- balances[_sender][token_address];
 
       match existing_balance with
@@ -811,7 +759,9 @@ transition AddLiquidity(
 
       emitMintPool token_address _sender new_contribution_u128
     end
-  end
+  end;
+
+  RecordBlock token_address current_block
 end
 
 transition RemoveLiquidity(
@@ -899,7 +849,6 @@ transition RemoveLiquidity(
 
       CallTransfer _sender token_amount_u128 token_address;
       AddFunds _sender zil_amount_u128;
-      CallBackRemoveLiquidity zil_amount_u128 token_amount_u128 token_address;
 
       e = {
         _eventname: "Burnt";
@@ -912,7 +861,9 @@ transition RemoveLiquidity(
   | None =>
     err = CodePoolMissing;
     ThrowError err
-  end
+  end;
+
+  RecordBlock token_address current_block
 end
 
 transition SwapExactZILForTokens(
