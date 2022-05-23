@@ -246,9 +246,6 @@ field total_contributions: Map ByStr20 Uint128 = Emp ByStr20 Uint128
 (* _sender -> token -> started_zil_reserve *)
 field balances: Map ByStr20 (Map ByStr20 Uint128) = Emp ByStr20 (Map ByStr20 Uint128)
 
-(* _sender -> token -> block_number *)
-field block_record: Map ByStr20 (Map ByStr20 BNum) = Emp ByStr20 (Map ByStr20 BNum)
-
 (* fee for liquidity providers *)
 field liquidity_fee: Uint256 = fee_demon
 
@@ -257,9 +254,6 @@ field protocol_fee: Uint128 = Uint128 500
 
 (* Min number zil for LP providers. *)
 field min_lp: Uint128 = Uint128 100000000000000
-
-(* A callback for interact with another contract. *)
-field callback_addr: ByStr20 = zero_address
 
 (* A Pool for swap rewards. *)
 field rewards_pool: ByStr20 = zero_address
@@ -489,17 +483,6 @@ procedure RecieveRewards(exact_amount: Uint128, recipient_address: ByStr20, outp
       err = CodePoolMissing;
       ThrowError err
     end
-  end
-end
-
-procedure RecordBlock(token: ByStr20, block: BNum)
-  is_zero = builtin eq zerobn block;
-
-  match is_zero with
-  | True =>
-    delete block_record[_sender][token]
-  | False =>
-    block_record[_sender][token] := block
   end
 end
 (* MSG CALL *)
@@ -759,9 +742,7 @@ transition AddLiquidity(
 
       emitMintPool token_address _sender new_contribution_u128
     end
-  end;
-
-  RecordBlock token_address current_block
+  end
 end
 
 transition RemoveLiquidity(
@@ -861,9 +842,7 @@ transition RemoveLiquidity(
   | None =>
     err = CodePoolMissing;
     ThrowError err
-  end;
-
-  RecordBlock token_address current_block
+  end
 end
 
 transition SwapExactZILForTokens(
@@ -955,11 +934,6 @@ end
 transition SetProtocolFee(new_fee: Uint128)
   OwnerOnly;
   protocol_fee := new_fee
-end
-
-transition SetProxyContract(new_addr: ByStr20)
-  OwnerOnly;
-  callback_addr := new_addr
 end
 
 transition SetRewardsPool(new_addr: ByStr20)
