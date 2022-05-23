@@ -387,7 +387,7 @@ procedure OperatorOnly()
   end
 end
 
-procedure OnlyUnPause()
+procedure OnlyNotPause()
   curent_pause <- pause;
   is_eq = builtin eq zero32 curent_pause;
   match is_eq with
@@ -657,7 +657,7 @@ transition AddLiquidity(
 )
   current_block <- & BLOCKNUMBER;
 
-  OnlyUnPause;
+  OnlyNotPause;
   ThrowExpired deadline_block current_block;
   ThrowZeroAddress token_address;
   ThrowZero max_token_amount;
@@ -754,7 +754,7 @@ transition RemoveLiquidity(
 )
   current_block <- & BLOCKNUMBER;
 
-  OnlyUnPause;
+  OnlyNotPause;
   ThrowExpired deadline_block current_block;
   ThrowZero contribution_amount;
   ThrowZero min_zil_amount;
@@ -853,7 +853,7 @@ transition SwapExactZILForTokens(
 )
   current_block <- & BLOCKNUMBER;
 
-  OnlyUnPause;
+  OnlyNotPause;
   ThrowExpired deadline_block current_block;
   ThrowZero _amount;
   ThrowZero min_token_amount;
@@ -879,7 +879,7 @@ transition SwapExactTokensForZIL(
 )
   current_block <- & BLOCKNUMBER;
 
-  OnlyUnPause;
+  OnlyNotPause;
   ThrowExpired deadline_block current_block;
   ThrowZero token_amount;
   ThrowZero min_zil_amount;
@@ -906,7 +906,7 @@ transition SwapExactTokensForTokens(
 )
   current_block <- & BLOCKNUMBER;
 
-  OnlyUnPause;
+  OnlyNotPause;
   ThrowExpired deadline_block current_block;
   ThrowZero token0_amount;
   ThrowZero min_token1_amount;
