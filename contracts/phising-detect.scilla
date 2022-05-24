@@ -62,7 +62,7 @@ procedure ThrowError(err : Error)
   throw e
 end
 
-procedure OnlyManagemer()
+procedure OnlyManager()
   is_exists <- exists managers[_sender];
   match is_exists with
   | False =>
@@ -109,7 +109,7 @@ transition ConfigurationManagers(addresses: List ByStr20)
 end
 
 transition AddURL(url: String, category: Uint32)
-  OnlyManagemer;
+  OnlyManager;
 
   is_exists_url <- exists urls[url];
 
@@ -128,7 +128,7 @@ end
 
 
 transition RemoveURL(url: String)
-  OnlyManagemer;
+  OnlyManager;
 
   is_exists_url <- exists urls[url];
 
@@ -148,7 +148,7 @@ end
 
 
 transition AddDomain(domain: String,  category: Uint32)
-  OnlyManagemer;
+  OnlyManager;
 
   is_exists_domain <- exists domains[domain];
 
@@ -166,7 +166,7 @@ transition AddDomain(domain: String,  category: Uint32)
 end
 
 transition RemoveDomain(domain: String)
-  OnlyManagemer;
+  OnlyManager;
 
   is_exists_domain <- exists domains[domain];
 
