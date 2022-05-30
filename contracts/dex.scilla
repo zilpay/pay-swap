@@ -36,6 +36,7 @@ let zerobn = BNum 0
 
 let one32 = Uint32 1
 let two32 = Uint32 2
+let two256 = Uint256 2
 let one128 = Uint128 1
 let fee_demon = Uint256 10000
 
@@ -222,6 +223,12 @@ let check_operators =
       fun (a: ByStr20) =>
         builtin eq a sender in
     addr_exists f operators
+
+let half_fee =
+  fun (fee: Uint256) =>
+    let diff = builtin sub fee_demon fee in
+    let diff = builtin div diff two256 in
+      builtin sub fee_demon diff
 
 
 contract DragonDexContract
@@ -590,6 +597,8 @@ procedure SwapOptions(
         | Pair input_zil_reserve input_token_reserve =>
           match output_pool with
           | Pair output_zil_reserve output_token_reserve =>
+            half_lp_fee = half_fee lp_fee;
+
             CallTransferFrom exact_amount _sender _this_address input_token;
 
             (* Swap input tokens to ZIL. *)
@@ -597,7 +606,7 @@ procedure SwapOptions(
               exact_amount
               input_token_reserve
               input_zil_reserve
-              fee_demon;
+              half_lp_fee;
             output_zil_amount_u128 = fall_u256 zil_intermediate_amount_u256;
             proto_rewards = get_amount_with_fee output_token sup_token proto_fee output_zil_amount_u128;
             zil_intermediate_amount = builtin sub output_zil_amount_u128 proto_rewards;
@@ -607,7 +616,7 @@ procedure SwapOptions(
               zil_intermediate_amount
               output_zil_reserve
               output_token_reserve
-              lp_fee;
+              half_lp_fee;
             output_tokens_amount_u128 = fall_u256 calculated_amount_u256;
 
             CheckLimits output_tokens_amount_u128 limit_amount;
