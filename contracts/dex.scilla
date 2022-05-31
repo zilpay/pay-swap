@@ -1,6 +1,8 @@
+(* SPDX-License-Identifier: GPL-3.0 *)
 (*
  * ZIlPay team
  * Copyright (c) 2022 by Rinat <https://github.com/hicaru>
+ * Audited by Igor Khan <https://github.com/Igor-Khan>
  *)
 scilla_version 0
 
