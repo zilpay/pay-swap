@@ -204,11 +204,14 @@ let is_empty_pool =
       orb x_empty y_empty
 
 let get_amount_with_fee =
+  fun (input: ByStr20) =>
   fun (output: ByStr20) =>
   fun (sup: ByStr20) =>
   fun (fee: Uint128) =>
   fun (amount: Uint128) =>
-    let is_same = builtin eq output sup in
+    let is_same_input = builtin eq input sup in
+    let is_same_output = builtin eq output sup in
+    let is_same = orb is_same_input is_same_output in
       match is_same with
       | True => zero128
       | False => builtin div amount fee
@@ -520,7 +523,7 @@ procedure SwapOptions(
     | Some pool =>
       match pool with
       | Pair zil_reserve token_reserve =>
-        proto_rewards = get_amount_with_fee output_token sup_token proto_fee exact_amount;
+        proto_rewards = get_amount_with_fee input_token output_token sup_token proto_fee exact_amount;
         exact_amount_after_fee = builtin sub exact_amount proto_rewards;
         calculated_amount_u256 = output_for
           exact_amount_after_fee
@@ -573,7 +576,7 @@ procedure SwapOptions(
             zil_reserve
             token_reserve;
 
-        proto_rewards = get_amount_with_fee input_token sup_token proto_fee output_zil_amount_u128;
+        proto_rewards = get_amount_with_fee input_token output_token sup_token proto_fee output_zil_amount_u128;
         output_zil_amount_u128 = builtin sub output_zil_amount_u128 proto_rewards;
 
         RecieveRewards proto_rewards recipient_address sup_token;
@@ -613,7 +616,7 @@ procedure SwapOptions(
               input_zil_reserve
               half_lp_fee;
             output_zil_amount_u128 = fall_u256 zil_intermediate_amount_u256;
-            proto_rewards = get_amount_with_fee output_token sup_token proto_fee output_zil_amount_u128;
+            proto_rewards = get_amount_with_fee input_token output_token sup_token proto_fee output_zil_amount_u128;
             zil_intermediate_amount = builtin sub output_zil_amount_u128 proto_rewards;
 
             (* Swap ZIL to output tokens. *)
