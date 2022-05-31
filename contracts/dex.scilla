@@ -573,7 +573,7 @@ procedure SwapOptions(
             zil_reserve
             token_reserve;
 
-        proto_rewards = get_amount_with_fee output_token sup_token proto_fee output_zil_amount_u128;
+        proto_rewards = get_amount_with_fee input_token sup_token proto_fee output_zil_amount_u128;
         output_zil_amount_u128 = builtin sub output_zil_amount_u128 proto_rewards;
 
         RecieveRewards proto_rewards recipient_address sup_token;
